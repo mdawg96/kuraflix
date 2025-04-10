@@ -5,25 +5,27 @@ const multer = require('multer');
 const fs = require('fs');
 const axios = require('axios');
 const dotenv = require('dotenv');
-const mongoose = require('mongoose');
 const { v4: uuidv4 } = require('uuid');
 const rateLimit = require('express-rate-limit');
 const { RedisStore } = require('rate-limit-redis');
 const Redis = require('ioredis');
 const Queue = require('bull');
 const FastRunPodComfyUIClient = require('../test/fast-runpod-client');
-
-// Import models
-const User = require('./models/User');
-const Character = require('./models/Character');
+const { OpenAI } = require('openai');
 
 // Load environment variables
 dotenv.config();
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('MongoDB connected'))
-  .catch(err => console.error('MongoDB connection error:', err));
+// Initialize OpenAI client
+const openai = process.env.OPENAI_API_KEY ? 
+  new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : 
+  null;
+
+if (openai) {
+  console.log('OpenAI client initialized successfully for image generation');
+} else {
+  console.warn('OpenAI API key not found. OpenAI image generation will not work.');
+}
 
 // Initialize RunPod clients
 let runpodClient = null;
@@ -41,272 +43,6 @@ if (!FORCE_DIRECT_COMFYUI && process.env.RUNPOD_API_KEY && process.env.RUNPOD_EN
   console.log('FORCE_DIRECT_COMFYUI is enabled - serverless RunPod will not be used');
 } else {
   console.warn('RunPod credentials not found. Serverless image generation will not work.');
-}
-
-// Initialize Direct ComfyUI client for Pod access (not serverless)
-if (process.env.DIRECT_COMFYUI_URL) {
-  const comfyUIBaseUrl = process.env.DIRECT_COMFYUI_URL;
-  console.log(`Direct ComfyUI client initialized at ${comfyUIBaseUrl}`);
-  
-  // Create a simple client for direct ComfyUI access
-  directComfyUIClient = {
-    baseUrl: comfyUIBaseUrl,
-    
-    async generateImage(prompt, negativePrompt) {
-      try {
-        console.log(`Generating image with ComfyUI at ${this.baseUrl}...`);
-        console.log(`Prompt: ${prompt}`);
-        
-        // Define the workflow variable at the function level, before any try blocks
-        let workflow = {
-          "3": {
-            "inputs": {
-              "seed": Math.floor(Math.random() * 2147483647),
-              "steps": 20,
-              "cfg": 8.0,
-              "sampler_name": "euler", // Matching what's shown in the UI
-              "scheduler": "normal",
-              "denoise": 1.0,
-              "model": ["4", 0],
-              "positive": ["5", 0],
-              "negative": ["6", 0],
-              "latent_image": ["7", 0]
-            },
-            "class_type": "KSampler"
-          },
-          "4": {
-            "inputs": {
-              "ckpt_name": "v1-5-pruned-emaonly-fp16.safetensors" // Using the model from the UI
-            },
-            "class_type": "CheckpointLoaderSimple"
-          },
-          "5": {
-            "inputs": {
-              "text": prompt,
-              "clip": ["4", 1]
-            },
-            "class_type": "CLIPTextEncode"
-          },
-          "6": {
-            "inputs": {
-              "text": negativePrompt,
-              "clip": ["4", 1]
-            },
-            "class_type": "CLIPTextEncode"
-          },
-          "7": {
-            "inputs": {
-              "width": 512,
-              "height": 512,
-              "batch_size": 1
-            },
-            "class_type": "EmptyLatentImage"
-          },
-          "8": {
-            "inputs": {
-              "samples": ["3", 0],
-              "vae": ["4", 2]
-            },
-            "class_type": "VAEDecode"
-          },
-          "9": {
-            "inputs": {
-              "images": ["8", 0],
-              "filename_prefix": "ComfyUI" // Using the filename prefix from UI
-            },
-            "class_type": "SaveImage"
-          }
-        };
-        
-        // First check if the ComfyUI API is accessible
-        try {
-          console.log(`Checking ComfyUI system stats at ${this.baseUrl}/system_stats`);
-          const healthResponse = await axios.get(`${this.baseUrl}/system_stats`, { 
-            timeout: 10000, // Increased timeout to 10 seconds
-            validateStatus: () => true 
-          });
-          console.log(`System stats response status: ${healthResponse.status}`);
-          console.log(`System stats response data:`, healthResponse.data);
-          
-          if (healthResponse.status !== 200) {
-            throw new Error(`ComfyUI API not accessible, status: ${healthResponse.status}`);
-          }
-          
-          console.log('ComfyUI API is accessible, proceeding with image generation');
-          
-          // Check available models
-          try {
-            console.log(`Checking available models at ${this.baseUrl}/object_info`);
-            const objectInfo = await axios.get(`${this.baseUrl}/object_info`, {
-              timeout: 10000
-            });
-            
-            // More robust model detection
-            if (objectInfo.data && objectInfo.data.CheckpointLoaderSimple) {
-              const ckptInfo = objectInfo.data.CheckpointLoaderSimple.input.required.ckpt_name;
-              
-              // Check for available models in options or use default
-              if (ckptInfo.options && ckptInfo.options.length > 0) {
-                const firstModel = ckptInfo.options[0];
-                console.log(`Found available model in options: ${firstModel}`);
-                workflow["4"].inputs.ckpt_name = firstModel;
-              } else if (ckptInfo.default) {
-                console.log(`Using default model: ${ckptInfo.default}`);
-                workflow["4"].inputs.ckpt_name = ckptInfo.default;
-              }
-              
-              // Also check if VAE is available - if not, modify the workflow
-              if (!objectInfo.data.VAEDecode) {
-                console.log('VAE may not be available, creating a simplified workflow');
-                
-                // Create a simplified workflow that doesn't require VAEDecode
-                // Remove nodes 8 and 9, and add a direct image save node
-                delete workflow["8"];
-                delete workflow["9"];
-                
-                // Add a different output node that doesn't require VAE
-                workflow["10"] = {
-                  "inputs": {
-                    "samples": ["3", 0],
-                    "filename_prefix": "output"
-                  },
-                  "class_type": "SaveLatent" // Save the latent directly
-                };
-                
-                console.log('Created simplified workflow without VAE dependency');
-              }
-            }
-          } catch (modelError) {
-            console.warn('Unable to fetch available models:', modelError.message);
-            // Continue with our default model
-          }
-        } catch (healthError) {
-          console.error('Failed to connect to ComfyUI API:', healthError);
-          throw new Error(`ComfyUI API connection failed: ${healthError.message}`);
-        }
-        
-        // Submit the workflow to ComfyUI
-        console.log(`Submitting workflow to ${this.baseUrl}/api/prompt`);
-        try {
-          const response = await axios.post(`${this.baseUrl}/api/prompt`, 
-            { 
-              prompt: workflow,
-              client_id: Date.now().toString()
-            },
-            {
-              headers: {
-                'Content-Type': 'application/json'
-              },
-              timeout: 30000 // Increased timeout to 30 seconds
-            }
-          );
-          
-          console.log(`API response status: ${response.status}`);
-          console.log(`API response data: ${JSON.stringify(response.data)}`);
-          
-          if (!response.data || !response.data.prompt_id) {
-            throw new Error('Failed to get prompt_id from ComfyUI');
-          }
-          
-          // Get the prompt ID
-          const promptId = response.data.prompt_id;
-          console.log(`ComfyUI prompt submitted with ID: ${promptId}`);
-          
-          // Poll for completion
-          let imageUrl = null;
-          let attempts = 0;
-          console.log(`Polling for results with ID: ${promptId}`);
-          
-          while (!imageUrl && attempts < 90) { // Increased maximum attempts to 90 (3 minutes)
-            await new Promise(r => setTimeout(r, 2000));
-            attempts++;
-            
-            try {
-              const historyResponse = await axios.get(`${this.baseUrl}/history/${promptId}`, {
-                timeout: 10000 // Added timeout
-              });
-              
-              if (attempts % 5 === 0) { // Log every 5 attempts to avoid too much logging
-                console.log(`History response attempt ${attempts}: ${JSON.stringify(historyResponse.data)}`);
-              }
-              
-              if (historyResponse.data && historyResponse.data[promptId]) {
-                // Check if there are any error messages in the history
-                if (historyResponse.data[promptId].error) {
-                  console.error(`ComfyUI error: ${historyResponse.data[promptId].error}`);
-                  throw new Error(`ComfyUI workflow error: ${historyResponse.data[promptId].error}`);
-                }
-                
-                // Check for execution status
-                if (historyResponse.data[promptId].status && historyResponse.data[promptId].status.exec_info && historyResponse.data[promptId].status.exec_info.queue_remaining === 0) {
-                  console.log('Workflow is being processed...');
-                }
-                
-                if (historyResponse.data[promptId].outputs) {
-                  const outputs = historyResponse.data[promptId].outputs;
-                  
-                  // Check for both PreviewImage and SaveImage nodes
-                  for (const nodeId in outputs) {
-                    if (outputs[nodeId].images && outputs[nodeId].images.length > 0) {
-                      const imageName = outputs[nodeId].images[0].filename || outputs[nodeId].images[0].image;
-                      imageUrl = `${this.baseUrl}/view?filename=${imageName}`;
-                      console.log(`Found image URL: ${imageUrl}`);
-                      break;
-                    }
-                  }
-                }
-              }
-            } catch (error) {
-              console.log(`Polling attempt ${attempts} failed: ${error.message}`);
-              // Continue polling even if there's an error
-            }
-            
-            if (imageUrl) break;
-            console.log(`Still waiting for image generation... (attempt ${attempts}/90)`);
-          }
-          
-          if (!imageUrl) {
-            throw new Error('Failed to generate image: timeout or no URL found');
-          }
-          
-          // Download the image
-          console.log(`Downloading image from ${imageUrl}`);
-          const imageResponse = await axios.get(imageUrl, { 
-            responseType: 'arraybuffer',
-            timeout: 30000
-          });
-          
-          const imageBuffer = Buffer.from(imageResponse.data);
-          
-          // Generate a unique filename
-          const outputFilename = `direct_comfyui_${Date.now()}.png`;
-          const outputPath = path.join(__dirname, 'public', 'outputs', outputFilename);
-          
-          // Ensure directory exists
-          if (!fs.existsSync(path.dirname(outputPath))) {
-            fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-          }
-          
-          // Save the image
-          fs.writeFileSync(outputPath, imageBuffer);
-          console.log(`Image saved to ${outputPath}`);
-          
-          // Return the web-accessible path
-          return {
-            success: true,
-            imagePath: `/outputs/${outputFilename}`
-          };
-        } catch (promptError) {
-          console.error('Error submitting workflow to ComfyUI:', promptError);
-          throw new Error(`Failed to submit workflow to ComfyUI: ${promptError.message}`);
-        }
-      } catch (error) {
-        console.error('Direct ComfyUI image generation error:', error.message);
-        console.error('Stack trace:', error.stack);
-        throw error;
-      }
-    }
-  };
 }
 
 // Initialize Redis for rate limiting
@@ -332,6 +68,21 @@ function getCachedImage(cacheKey) {
     return imageCache.get(cacheKey);
   }
   return null;
+}
+
+// Function to cache a generated image
+function cacheImage(cacheKey, data) {
+  if (!cacheKey || !data || !data.imagePath) {
+    console.warn('Cannot cache image: Invalid or missing data');
+    return false;
+  }
+  
+  console.log(`Caching image result for key: ${cacheKey}`);
+  imageCache.set(cacheKey, {
+    ...data,
+    generatedAt: new Date()
+  });
+  return true;
 }
 
 // Function to setup Redis and related services
@@ -498,6 +249,401 @@ async function setupRedisServices() {
     });
     
     return false;
+  }
+}
+
+// Updated helper function for GPT-4o + DALL-E 3 workflow
+async function generateImageWithGPT4o(characters, environment, action, style, negativePrompt, outputPath) {
+  if (!openai) {
+    throw new Error('OpenAI client not initialized');
+  }
+
+  console.log('Generating panel using GPT-4o + DALL-E 3 workflow...');
+
+  try {
+    // 1. Prepare inputs for GPT-4o
+    const characterDetails = characters.map(c => `Name: ${c.name}, Description: ${c.description || 'N/A'}`).join('; ');
+    const baseTextPrompt = `Create a manga panel in ${style} style. Setting: ${environment}. Action: ${action}. Characters involved: ${characterDetails}. Avoid: ${negativePrompt || 'none'}.`;
+
+    // Create the initial system message
+    const messages = [
+      {
+        role: "system",
+        content: "You are an expert manga/anime scene prompt generator. Based on the user's request and the provided character images, create a highly detailed and descriptive prompt suitable for DALL-E 3 to generate the described panel accurately. Focus on visual details: character poses, expressions, composition, background elements, and overall mood, adhering to the requested style. Ensure the prompt explicitly asks DALL-E 3 to reference the provided character images for visual consistency. Incorporate negative constraints directly into the positive prompt. Output *only* the final DALL-E 3 prompt."
+      }
+    ];
+    
+    // Start building a user message with clear character identification
+    const userMessageContent = [
+      { 
+        type: "text", 
+        text: `You are helping create a manga panel in ${style} style. Below are the character references for the scene.` 
+      }
+    ];
+
+    // Add character images to the message content, paired with their names
+    let imageCount = 0;
+    for (const character of characters) {
+      // Log the character object to debug image properties
+      console.log(`Processing character for GPT-4o: ${character.name}`, {
+        imageUrl: character.imageUrl,
+        thumbnail: character.thumbnail,
+        imagePath: character.imagePath
+      });
+      
+      // Try multiple possible image fields
+      const imageUrl = character.imageUrl || character.thumbnail || character.imagePath;
+      
+      if (imageUrl) {
+        try {
+          console.log(`Processing character image for ${character.name}: ${imageUrl.substring(0, 60)}...`);
+          let imageData;
+          
+          if (imageUrl.startsWith('http')) {
+            // Remote URL - fetch it
+            console.log(`Fetching remote image for ${character.name} from: ${imageUrl}`);
+            const response = await axios.get(imageUrl, { 
+              responseType: 'arraybuffer', 
+              timeout: 15000,
+              headers: { 'User-Agent': 'Mozilla/5.0 (Manga Creator App)' } // Some servers require a user agent
+            });
+            imageData = Buffer.from(response.data).toString('base64');
+            console.log(`Successfully fetched remote image for ${character.name}, size: ${response.data.length} bytes`);
+          } else if (imageUrl.startsWith('/outputs/') || imageUrl.startsWith('./outputs/')) {
+            // Local path - read file
+            const localPath = path.resolve(
+              imageUrl.startsWith('/') 
+                ? path.join(__dirname, 'public', imageUrl) 
+                : path.join(__dirname, imageUrl)
+            );
+            console.log(`Looking for local image at: ${localPath}`);
+            
+            if (fs.existsSync(localPath)) {
+              const fileData = fs.readFileSync(localPath);
+              imageData = fileData.toString('base64');
+              console.log(`Successfully read local image for ${character.name}, size: ${fileData.length} bytes`);
+            } else {
+              console.warn(`Local character image not found: ${localPath}`);
+              continue;
+            }
+          } else {
+            // Try as an absolute path
+            const absolutePath = path.resolve(imageUrl);
+            console.log(`Trying absolute path: ${absolutePath}`);
+            
+            if (fs.existsSync(absolutePath)) {
+              const fileData = fs.readFileSync(absolutePath);
+              imageData = fileData.toString('base64');
+              console.log(`Successfully read image from absolute path for ${character.name}`);
+            } else {
+              console.warn(`Unsupported character image URL format or file not found: ${imageUrl}`);
+              continue;
+            }
+          }
+
+          // Determine image MIME type
+          const imageType = imageUrl.split('.').pop().toLowerCase();
+          const mimeType = 
+            imageType === 'png' ? 'image/png' : 
+            imageType === 'jpg' || imageType === 'jpeg' ? 'image/jpeg' :
+            imageType === 'webp' ? 'image/webp' :
+            'image/png'; // Default to PNG if unknown
+
+          // Add an explicit identifier text before the image
+          userMessageContent.push(
+            { type: "text", text: `This is ${character.name}:` }
+          );
+          
+          // Add the image
+          userMessageContent.push({
+            type: "image_url",
+            image_url: {
+              url: `data:${mimeType};base64,${imageData}`,
+              detail: "high" // Use high detail for character recognition
+            }
+          });
+          
+          // Add any character description if available
+          if (character.description) {
+            userMessageContent.push(
+              { type: "text", text: `Description of ${character.name}: ${character.description}` }
+            );
+          }
+          
+          imageCount++;
+          console.log(`Successfully added image for ${character.name} to GPT-4o prompt`);
+        } catch (imgError) {
+          console.error(`Failed to fetch or process character image ${imageUrl}: ${imgError.message}`);
+          if (imgError.stack) console.error(imgError.stack);
+          userMessageContent.push({ type: "text", text: `(Note: Failed to load image for character ${character.name})` });
+        }
+      } else {
+        console.warn(`No image URL found for character: ${character.name}`);
+      }
+    }
+    
+    // Now add the final instruction with the action and environment details
+    userMessageContent.push({ 
+      type: "text", 
+      text: `Now generate a prompt for DALL-E 3 to create a manga panel that shows: ${action}
+Environment/Setting: ${environment}
+Style: ${style}
+The prompt should refer to each character by name, matching them to their appearance in the reference images provided above.`
+    });
+    
+    // Add the completed user message to the messages array
+    messages.push({
+      role: "user",
+      content: userMessageContent
+    });
+    
+    console.log(`Added ${imageCount} character images to GPT-4o prompt.`);
+
+    // 2. Call GPT-4o to generate the DALL-E prompt
+    console.log("Calling GPT-4o to generate DALL-E prompt...");
+    const chatCompletion = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: messages,
+      max_tokens: 500 // Allow more tokens for potentially detailed prompts
+    });
+
+    if (!chatCompletion.choices || chatCompletion.choices.length === 0 || !chatCompletion.choices[0].message.content) {
+        throw new Error('No prompt generated by GPT-4o');
+    }
+    const dallePrompt = chatCompletion.choices[0].message.content.trim();
+    console.log(`Generated DALL-E Prompt (length ${dallePrompt.length}): ${dallePrompt.substring(0, 200)}...`);
+
+    // 3. Call DALL-E 3 to generate the image
+    console.log("Calling DALL-E 3 to generate image...");
+    const imageResponse = await openai.images.generate({
+      model: "dall-e-3",
+      prompt: dallePrompt,
+      n: 1,
+      size: "1024x1024",
+      quality: "standard",
+      style: style === 'manga' ? 'natural' : 'vivid',
+    });
+
+    console.log('DALL-E 3 response received.');
+
+    if (!imageResponse.data || imageResponse.data.length === 0) {
+      throw new Error('No image generated by DALL-E 3');
+    }
+
+    const generatedImageUrl = imageResponse.data[0].url;
+    if (!generatedImageUrl) {
+      throw new Error('No image URL in DALL-E 3 response');
+    }
+
+    // 4. Download and save the image
+    console.log(`Downloading final image from DALL-E 3: ${generatedImageUrl}`);
+    const finalImageResponse = await axios.get(generatedImageUrl, {
+      responseType: 'arraybuffer',
+      timeout: 45000 // Increased timeout for potentially larger DALL-E images
+    });
+    const imageBuffer = Buffer.from(finalImageResponse.data);
+
+    const outputDir = path.dirname(outputPath);
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+
+    fs.writeFileSync(outputPath, imageBuffer);
+    console.log(`Final panel image saved to ${outputPath}`);
+
+    const outputFilename = path.basename(outputPath);
+    const webPath = `/outputs/${outputFilename}`;
+
+    return {
+      success: true,
+      imagePath: webPath,
+      prompt: dallePrompt // Return the generated prompt for reference
+    };
+
+  } catch (error) {
+    console.error('Error in GPT-4o/DALL-E 3 image generation workflow:', error.message);
+    if (error.response) {
+      console.error('OpenAI API Error Details:', JSON.stringify(error.response.data, null, 2));
+    }
+    // Return failure object for the route handler
+    return { success: false, message: `GPT-4o/DALL-E 3 Error: ${error.message}` };
+  }
+}
+
+// Add a specialized function for single character generation
+async function generateSingleCharacterWithGPT4o(character, environment, action, style, negativePrompt, outputPath) {
+  console.log('Generating single character using GPT-4o + DALL-E 3 workflow...');
+
+  try {
+    // Create the initial system message with specific instructions for a SINGLE character
+    const messages = [
+      {
+        role: "system",
+        content: "You are an expert character designer. You will create a detailed prompt for DALL-E 3 to generate a SINGLE CHARACTER portrait based on the user's description. Focus on creating a full-body portrait of ONLY ONE CHARACTER with clear details of their appearance. Do NOT introduce additional characters. Output ONLY the final DALL-E 3 prompt."
+      }
+    ];
+    
+    // Start building a user message
+    const userMessageContent = [
+      { 
+        type: "text", 
+        text: `Create a high-quality ${style || 'anime'} style portrait of a SINGLE CHARACTER.` 
+      }
+    ];
+
+    // Process character images if available
+    const imageUrl = character.imageUrl || character.thumbnail || character.imagePath;
+    if (imageUrl) {
+      try {
+        console.log(`Processing reference image for character: ${imageUrl.substring(0, 60)}...`);
+        let imageData;
+        
+        if (imageUrl.startsWith('http')) {
+          // Remote URL - fetch it
+          const response = await axios.get(imageUrl, { 
+            responseType: 'arraybuffer', 
+            timeout: 15000,
+            headers: { 'User-Agent': 'Mozilla/5.0 (Character Creator App)' }
+          });
+          imageData = Buffer.from(response.data).toString('base64');
+        } else if (imageUrl.startsWith('/outputs/') || imageUrl.startsWith('./outputs/')) {
+          // Local path - read file
+          const localPath = path.resolve(
+            imageUrl.startsWith('/') 
+              ? path.join(__dirname, 'public', imageUrl) 
+              : path.join(__dirname, imageUrl)
+          );
+          
+          if (fs.existsSync(localPath)) {
+            const fileData = fs.readFileSync(localPath);
+            imageData = fileData.toString('base64');
+          }
+        } else {
+          // Try as an absolute path
+          const absolutePath = path.resolve(imageUrl);
+          
+          if (fs.existsSync(absolutePath)) {
+            const fileData = fs.readFileSync(absolutePath);
+            imageData = fileData.toString('base64');
+          }
+        }
+
+        if (imageData) {
+          // Determine image MIME type
+          const imageType = imageUrl.split('.').pop().toLowerCase();
+          const mimeType = 
+            imageType === 'png' ? 'image/png' : 
+            imageType === 'jpg' || imageType === 'jpeg' ? 'image/jpeg' :
+            imageType === 'webp' ? 'image/webp' :
+            'image/png'; // Default to PNG if unknown
+
+          // Add the image reference
+          userMessageContent.push(
+            { type: "text", text: `Here's a reference image (if any):` }
+          );
+          
+          userMessageContent.push({
+            type: "image_url",
+            image_url: {
+              url: `data:${mimeType};base64,${imageData}`,
+              detail: "high"
+            }
+          });
+        }
+      } catch (imgError) {
+        console.log(`Could not process reference image: ${imgError.message}`);
+      }
+    }
+    
+    // Add character details
+    userMessageContent.push({ 
+      type: "text", 
+      text: `Character details:
+Name: ${character.name || 'Unnamed Character'}
+Description: ${character.description || 'No description provided'}
+
+Please create a prompt for DALL-E 3 to generate a FULL BODY PORTRAIT of this SINGLE CHARACTER with the following specs:
+- Character should be: ${action || 'standing in a neutral pose'}
+- Environment: ${environment || 'simple studio background'}
+- Style: ${style || 'anime'}
+- Show the ENTIRE body from head to feet
+- Character should be centered in the frame
+- IMPORTANT: Generate ONLY ONE CHARACTER - do not add any other people or characters to the scene
+- DO NOT create a manga panel with multiple characters
+- Focus solely on creating this single character as described`
+    });
+    
+    // Add the completed user message to the messages array
+    messages.push({
+      role: "user",
+      content: userMessageContent
+    });
+
+    // Call GPT-4o to generate the DALL-E prompt
+    console.log("Calling GPT-4o to generate character prompt...");
+    const chatCompletion = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: messages,
+      max_tokens: 500
+    });
+
+    if (!chatCompletion.choices || chatCompletion.choices.length === 0 || !chatCompletion.choices[0].message.content) {
+      throw new Error('No prompt generated by GPT-4o');
+    }
+    const dallePrompt = chatCompletion.choices[0].message.content.trim();
+    console.log(`Generated DALL-E Character Prompt: ${dallePrompt.substring(0, 200)}...`);
+
+    // Call DALL-E 3 to generate the image
+    console.log("Calling DALL-E 3 to generate character image...");
+    const imageResponse = await openai.images.generate({
+      model: "dall-e-3",
+      prompt: dallePrompt,
+      n: 1,
+      size: "1024x1024",
+      quality: "standard",
+      style: style === 'manga' ? 'natural' : 'vivid',
+    });
+
+    if (!imageResponse.data || imageResponse.data.length === 0) {
+      throw new Error('No image generated by DALL-E 3');
+    }
+
+    const generatedImageUrl = imageResponse.data[0].url;
+    if (!generatedImageUrl) {
+      throw new Error('No image URL in DALL-E 3 response');
+    }
+
+    // Download and save the image
+    console.log(`Downloading character image from DALL-E 3: ${generatedImageUrl}`);
+    const finalImageResponse = await axios.get(generatedImageUrl, {
+      responseType: 'arraybuffer',
+      timeout: 45000
+    });
+    const imageBuffer = Buffer.from(finalImageResponse.data);
+
+    const outputDir = path.dirname(outputPath);
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+
+    fs.writeFileSync(outputPath, imageBuffer);
+    console.log(`Character image saved to ${outputPath}`);
+
+    const outputFilename = path.basename(outputPath);
+    const webPath = `/outputs/${outputFilename}`;
+
+    return {
+      success: true,
+      imagePath: webPath,
+      prompt: dallePrompt
+    };
+
+  } catch (error) {
+    console.error('Error in GPT-4o/DALL-E 3 character generation:', error.message);
+    if (error.response) {
+      console.error('OpenAI API Error Details:', JSON.stringify(error.response.data, null, 2));
+    }
+    return { success: false, message: `Character Generation Error: ${error.message}` };
   }
 }
 
@@ -739,11 +885,11 @@ app.post('/api/generate-character', async (req, res) => {
     let prompt;
     
     if (description) {
-      // Use the text description
-      prompt = `${artStyle || 'anime style'}, full body portrait of a character named ${name || 'character'}, ${description}, high quality, detailed, best quality`;
+      // Use the text description with more explicit full-body framing
+      prompt = `${artStyle || 'anime style'}, ENTIRE BODY AND FACE VIEW of character named ${name || 'character'}, ${description}. Full-length portrait showing 100% of body from top of head to bottom of feet. Face fully visible and detailed. Character centered with feet touching bottom edge of frame. No cropping of any body parts. High quality, detailed.`;
     } else {
-      // Use the detailed traits
-      prompt = `${artStyle || 'anime style'}, full body portrait of a ${(physicalTraits.gender || 'male')} character named ${name || 'character'}, `;
+      // Use the detailed traits with more explicit full-body framing
+      prompt = `${artStyle || 'anime style'}, ENTIRE BODY AND FACE VIEW of character named ${name || 'character'}, `;
       
       // Add physical traits
       if (physicalTraits.race) prompt += `${physicalTraits.race}, `;
@@ -765,15 +911,65 @@ app.post('/api/generate-character', async (req, res) => {
       if (extras.clothingStyle) prompt += `wearing ${extras.clothingStyle} style clothing, `;
       if (role) prompt += `${role} character, `;
       
-      prompt += "high quality, detailed, best quality";
+      prompt += "Full-length portrait showing 100% of body from top of head to bottom of feet. Face fully visible and detailed. Character centered with feet touching bottom edge of frame. No cropping of any body parts. High quality, detailed.";
     }
     
     console.log('Generated prompt:', prompt);
     
     // Prepare negative prompt
-    const negativePrompt = "bad quality, low quality, worst quality, mutated hands, extra limbs, poorly drawn face, poorly drawn hands, missing fingers";
+    const negativePrompt = "bad quality, low quality, worst quality, mutated hands, extra limbs, poorly drawn face, poorly drawn hands, missing fingers, cropped feet, cropped legs, cut off feet, cut off legs, zoomed in, close up, no feet visible, partial body";
     
-    // Try Direct ComfyUI Pod first if available
+    // First try OpenAI if available
+    if (openai) {
+      try {
+        console.log('Attempting to generate character using OpenAI...');
+        
+        // Create a properly formatted character object for single character generation
+        const characterObject = {
+          name: name,
+          description: description || '',
+          // If there's an existing image for this character, include it
+          imageUrl: null // No existing image yet since we're generating one
+        };
+        
+        // Set up environment and action based on character details
+        const environment = "neutral studio background";
+        const action = "standing in a professional character portrait pose, full body visible";
+        
+        // Use the specialized single character generation function
+        const result = await generateSingleCharacterWithGPT4o(characterObject, environment, action, artStyle || 'anime', negativePrompt, outputPath);
+        console.log('OpenAI result:', JSON.stringify(result));
+        
+        if (result && result.success) {
+          console.log('Character generated successfully with OpenAI.');
+          
+          // Return the generated image data without saving to database
+          return res.json({
+            success: true,
+            message: 'Character generated successfully via OpenAI',
+            character: {
+              name,
+              imagePath: result.imagePath,
+              prompt,
+              role,
+              artStyle,
+              generatedWith: 'openai'
+            }
+          });
+        } else {
+          console.error('OpenAI generation returned unsuccessful result:', result);
+          console.log('Falling back to DirectComfyUI...');
+        }
+      } catch (openaiError) {
+        console.error('OpenAI generation failed:', openaiError);
+        console.error('Error stack:', openaiError.stack);
+        console.log('Falling back to DirectComfyUI...');
+      }
+    } else {
+      console.log('OpenAI client not available. Falling back to DirectComfyUI...');
+    }
+    
+    // Try Direct ComfyUI Pod as fallback
     if (directComfyUIClient) {
       try {
         console.log('Attempting to generate character using direct ComfyUI pod...');
@@ -784,12 +980,18 @@ app.post('/api/generate-character', async (req, res) => {
         
         if (result && result.success) {
           console.log('Character generated successfully with direct ComfyUI pod.');
+          
+          // Return the generated image data without saving to database
           return res.json({
             success: true,
             message: 'Character generated successfully via direct ComfyUI pod',
             character: {
-              name: name || 'Character',
-              imagePath: result.imagePath
+              name,
+              imagePath: result.imagePath,
+              prompt,
+              role,
+              artStyle,
+              generatedWith: 'comfyui'
             }
           });
         } else {
@@ -815,17 +1017,17 @@ app.post('/api/generate-character', async (req, res) => {
       }
     }
     
-    // Fall back to RunPod serverless endpoint if direct ComfyUI failed or is not available
+    // Fall back to RunPod serverless endpoint as final option
     if (!runpodClient) {
       return res.status(500).json({
         success: false,
-        message: 'Image generation unavailable. RunPod API credentials are missing or serverless is disabled.'
+        message: 'Image generation unavailable. All generation methods failed or are not available.'
       });
     }
     
     // Generate the image using RunPod
     try {
-      console.log('Generating character with optimized parameters...');
+      console.log('Generating character with RunPod as final fallback...');
       
       // Try with fallbacks to find the best model and parameters combination
       const job = await runpodClient.generateWithFallbacks({
@@ -921,35 +1123,16 @@ app.post('/api/generate-character', async (req, res) => {
       const webPath = `/outputs/${outputFilename}`;
       console.log(`Web path for image: ${webPath}`);
       
-      // Save character to database
-      const character = new Character({
-        name,
-        description: description || null,
-        traits: {
-          physical: physicalTraits,
-          facial: facialFeatures,
-          hair: hairFeatures,
-          extras
-        },
-        imagePath: webPath,
-        prompt,
-        role: role || null,
-        artStyle: artStyle || null,
-        createdAt: new Date()
-      });
-      
-      await character.save();
-      
-      console.log(`Character created and saved to database with ID: ${character._id}`);
-      
-      // Return success response
+      // Return the generated image data without saving to database
       return res.json({
         success: true,
         character: {
-          id: character._id,
-          name: character.name,
-          imagePath: character.imagePath,
-          imageUrl: `http://localhost:5001${character.imagePath}`
+          name,
+          imagePath: webPath,
+          prompt,
+          role,
+          artStyle,
+          generatedWith: 'runpod'
         }
       });
     } catch (runpodError) {
@@ -973,274 +1156,43 @@ if (limiter) {
   app.use(limiter);
 }
 
-// Update the generate-manga-panel endpoint
-app.post('/api/generate-manga-panel', userImageLimiter || ((req, res, next) => next()), async (req, res) => {
+// Character endpoints
+app.post('/api/characters', async (req, res) => {
+  console.log('Character save request received:', JSON.stringify(req.body, null, 2));
+  
   try {
-    const { 
-      characters, 
-      environment, 
-      action, 
-      style = 'anime', 
-      model = 'anything-v5',
-      controlNet = null,
-      useLoRA = false,
-      loraModel = null,
-      negativePrompt = 'low quality, bad anatomy, worst quality, blurry',
-      userId
-    } = req.body;
+    const { name, description, imagePath, role, artStyle, story, prompt, generatedWith } = req.body;
     
-    // Generate cache key from parameters
-    const cacheKey = createCacheKey({ characters, environment, action, style, model });
-    
-    // Check if we already have this image cached
-    const cachedResult = getCachedImage(cacheKey);
-    if (cachedResult) {
-      console.log('Returning cached image result');
-      return res.status(200).json({
-        success: true,
-        ...cachedResult
-      });
-    }
-    
-    // Skip user verification during testing
-    let userVerified = true;
-    
-    if (userId) {
-      // Verify user exists and has permission
-      try {
-        const user = await User.findById(userId);
-        if (!user) {
-          userVerified = false;
-        }
-      } catch (error) {
-        console.warn("User verification skipped:", error.message);
-      }
-    }
-
-    if (!userVerified) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    if (redis && userId) {
-      // Check if user has reached their daily limit
-      const userKey = `user:${userId}:images`;
-      const userImageCount = await redis.get(userKey);
-      if (userImageCount && parseInt(userImageCount) >= 50) {
-        return res.status(429).json({ 
-          error: 'Daily image generation limit reached. Please try again tomorrow.' 
-        });
-      }
-    }
-
-    // Create output filename
-    const outputFilename = `manga_${Date.now()}.png`;
-    const outputPath = path.join(outputsDir, outputFilename);
-
-    // Construct a detailed prompt for manga-style image
-    const characterNames = characters.map(c => c.name).join(', ');
-    const prompt = `${style} style, ${environment}, ${characterNames} ${action}${style === 'manga' ? ', black and white' : ''}`;
-
-    // Handle image generation with or without queue
-    if (imageGenerationQueue) {
-      // Add job to queue with minimal data
-      const job = await imageGenerationQueue.add({
-        prompt,
-        negativePrompt,
-        outputPath,
-        cacheKey,
-        userId
-      }, {
-        removeOnComplete: 100,   // Keep only last 100 completed jobs
-        removeOnFail: 50,        // Keep only last 50 failed jobs
-        attempts: 2              // Retry once if it fails
-      });
-
-      // Return job ID immediately
-      res.status(202).json({
-        success: true,
-        jobId: job.id,
-        message: 'Image generation queued successfully'
-      });
-    } else {
-      // Direct processing without queue
-      try {
-        // Check if the RunPod client is initialized
-        if (!runpodClient) {
-          throw new Error('RunPod client not initialized. Check your API credentials.');
-        }
-
-        console.log('Generating image with optimized parameters...');
-        
-        // Try with fallbacks to find the best model and parameters combination
-        const job = await runpodClient.generateWithFallbacks({
-          prompt: prompt,
-          negative_prompt: negativePrompt
-        });
-        
-        console.log('RunPod job started:', job.id);
-        
-        // Wait for job completion with a progress callback
-        const result = await runpodClient.waitForJobCompletion(
-          job.id, 
-          60, // 60 attempts (up to 2 minutes)
-          2000, // Poll every 2 seconds
-          (status, attempt) => console.log(`Job status (attempt ${attempt + 1}/60): ${status.status}`)
-        );
-        
-        console.log('Job completed successfully:', result.status);
-        
-        // Dump the structure to see what we're getting
-        console.log('Result structure:', JSON.stringify({
-          status: result.status,
-          hasOutput: !!result.output,
-          hasImages: result.output ? !!result.output.images : false,
-          imageCount: result.output && result.output.images ? result.output.images.length : 0,
-          firstImageKeys: result.output && result.output.images && result.output.images.length > 0 ? 
-            Object.keys(result.output.images[0]) : []
-        }, null, 2));
-        
-        // Process the result
-        if (!result.output || !result.output.images || result.output.images.length === 0) {
-          console.log('No image in RunPod result, creating a fallback image');
-          
-          // Create a fallback image - a colored rectangle with the character names
-          const width = 512;
-          const height = 512;
-          
-          // Write fallback image to file
-          try {
-            // Create a simple colored rectangle image as a fallback
-            const testHeaderPNG = Buffer.from([
-              0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 
-              0x00, 0x00, 0x00, 0x0D, 
-              0x49, 0x48, 0x44, 0x52, 
-              0x00, 0x00, 0x02, 0x00,  // width 512
-              0x00, 0x00, 0x02, 0x00,  // height 512
-              0x08, 0x06, 0x00, 0x00, 0x00
-            ]);
-            
-            // Create a buffer with random color data
-            const dataSize = width * height * 4;
-            const buffer = Buffer.alloc(dataSize);
-            
-            // Fill with a gradient color - different from character images
-            for (let i = 0; i < dataSize; i += 4) {
-              buffer[i] = 120;                              // R constant
-              buffer[i + 1] = 50 + Math.floor(i / (dataSize/200)); // G increases gradually
-              buffer[i + 2] = 80;                           // B constant
-              buffer[i + 3] = 255;                          // Alpha
-            }
-            
-            fs.writeFileSync(outputPath, Buffer.concat([testHeaderPNG, buffer]));
-            console.log(`Fallback manga panel created at ${outputPath}`);
-            
-            // Continue with the regular flow using the fallback image
-          } catch (fallbackError) {
-            console.error('Failed to create fallback image:', fallbackError);
-            throw new Error('Failed to generate manga panel: ' + fallbackError.message);
-          }
-        } else {
-          // Process the actual image from RunPod  
-          const imageData = result.output.images[0].image;
-          
-          console.log('Image data received from RunPod:', imageData ? 'Valid data' : 'No data');
-          console.log('Image data length:', imageData ? imageData.length : 0);
-          
-          // Save the base64 image to a file
-          const base64Data = imageData.replace(/^data:image\/png;base64,/, '');
-          console.log(`Base64 data length: ${base64Data.length} characters`);
-          console.log(`Saving image to ${outputPath}`);
-          console.log(`Directory exists: ${fs.existsSync(path.dirname(outputPath))}`);
-          
-          try {
-            fs.writeFileSync(outputPath, Buffer.from(base64Data, 'base64'));
-            console.log(`Image saved successfully to ${outputPath}`);
-          } catch (saveError) {
-            console.error(`Error saving image: ${saveError.message}`);
-            throw saveError;
-          }
-        }
-        
-        // Get the relative path for the response
-        const webPath = `/outputs/${outputFilename}`;
-        console.log(`Web path for image: ${webPath}`);
-        
-        // Save result to cache for future requests
-        imageCache.set(cacheKey, {
-          imagePath: webPath,
-          generatedAt: new Date()
-        });
-        
-        // Return success response
-        return res.json({
-          success: true,
-          imagePath: webPath,
-          environment,
-          characters,
-          action,
-          style,
-          model
-        });
-      } catch (error) {
-        console.error('Image generation failed:', error.message);
-        return res.status(500).json({
-          success: false,
-          message: `Image generation failed: ${error.message}`
-        });
-      }
-    }
-
-    // Update user's image count if Redis is available
-    if (redis && userId) {
-      const userKey = `user:${userId}:images`;
-      await redis.incr(userKey);
-      await redis.expire(userKey, 24 * 60 * 60); // 24 hour expiry
-    }
-
-  } catch (error) {
-    console.error('Error queuing manga panel generation:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-});
-
-// Add endpoint to check job status
-app.get('/api/generate-manga-panel/status/:jobId', async (req, res) => {
-  try {
-    if (!imageGenerationQueue) {
-      return res.status(503).json({
+    // Basic validation
+    if (!name || !imagePath) {
+      return res.status(400).json({
         success: false,
-        message: 'Queue system not available'
+        message: 'Name and imagePath are required fields'
       });
     }
     
-    const { jobId } = req.params;
-    const job = await imageGenerationQueue.getJob(jobId);
-    
-    if (!job) {
-      return res.status(404).json({
-        success: false,
-        message: 'Job not found'
-      });
-    }
-
-    const state = await job.getState();
-    const progress = job.progress();
-
-    res.status(200).json({
+    // Return success with the character data
+    // Note: We're not saving to MongoDB - the frontend will handle saving to Firestore
+    return res.json({
       success: true,
-      jobId,
-      state,
-      progress,
-      result: job.returnvalue
+      message: 'Character data validated successfully',
+      character: {
+        name,
+        description: description || null,
+        imagePath,
+        prompt: prompt || null,
+        role: role || null,
+        artStyle: artStyle || null,
+        story: story || null,
+        generatedWith: generatedWith || 'unknown',
+        createdAt: new Date()
+      }
     });
   } catch (error) {
-    console.error('Error checking job status:', error);
-    res.status(500).json({
+    console.error('Error processing character:', error);
+    return res.status(500).json({
       success: false,
-      message: error.message
+      message: `Error processing character: ${error.message}`
     });
   }
 });
@@ -1312,6 +1264,183 @@ app.post('/api/render-episode', (req, res) => {
   });
 });
 
+// Manga panel generation endpoint
+app.post('/api/generate-manga-panel', async (req, res) => {
+  try {
+    const { characters, environment, action, style, model, negativePrompt } = req.body;
+    
+    // Basic validation
+    if (!characters || characters.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'At least one character is required'
+      });
+    }
+    
+    if (!environment) {
+      return res.status(400).json({
+        success: false,
+        message: 'Environment is required'
+      });
+    }
+    
+    if (!action) {
+      return res.status(400).json({
+        success: false,
+        message: 'Action is required'
+      });
+    }
+    
+    console.log('Manga panel generation request received:', {
+      charactersCount: characters.length,
+      environment,
+      action,
+      style,
+      model: model || 'gpt-4o'
+    });
+    
+    // Create a unique job ID
+    const jobId = `manga_panel_${Date.now()}_${model || 'gpt-4o'}`;
+    
+    // Define output path for the generated image
+    const outputPath = path.join(__dirname, 'public', 'outputs', `${jobId}.png`);
+    
+    // Create a cache key for this request
+    const cacheKey = createCacheKey({ characters, environment, action, style, model });
+    const cachedResult = getCachedImage(cacheKey);
+    
+    if (cachedResult) {
+      console.log(`Returning cached manga panel for key: ${cacheKey}`);
+      return res.json({
+        success: true,
+        imagePath: cachedResult.imagePath,
+        prompt: cachedResult.prompt,
+        message: 'Retrieved from cache'
+      });
+    }
+    
+    // For direct/immediate generation (not queuing)
+    if (model === 'gpt-4o') {
+      // Start generating immediately and return job ID for status checking
+      res.json({
+        success: true,
+        jobId,
+        message: 'Manga panel generation started'
+      });
+      
+      // Process after response is sent
+      try {
+        // Create the "jobs" map if it doesn't exist yet
+        if (!global.jobs) {
+          global.jobs = new Map();
+        }
+        
+        // Store job info for status checks
+        global.jobs.set(jobId, {
+          id: jobId,
+          state: 'active',
+          progress: 10,
+          createdAt: new Date()
+        });
+        
+        // Generate the image
+        const result = await generateImageWithGPT4o(
+          characters,
+          environment,
+          action,
+          style || 'manga',
+          negativePrompt || '',
+          outputPath
+        );
+        
+        // Update job with success result
+        const imagePath = `/outputs/${jobId}.png`;
+        global.jobs.set(jobId, {
+          id: jobId,
+          state: 'completed',
+          progress: 100,
+          result: {
+            panel: {
+              imageUrl: imagePath
+            }
+          },
+          completedAt: new Date()
+        });
+        
+        // Cache the result
+        cacheImage(cacheKey, {
+          imagePath,
+          prompt: result?.prompt || ''
+        });
+        
+        console.log(`Manga panel generated successfully: ${imagePath}`);
+      } catch (error) {
+        console.error('Error generating manga panel:', error);
+        
+        // Update job with error result
+        if (global.jobs) {
+          global.jobs.set(jobId, {
+            id: jobId,
+            state: 'failed',
+            error: error.message,
+            completedAt: new Date()
+          });
+        }
+      }
+    } else {
+      // Fallback or unsupported model
+      return res.status(400).json({
+        success: false,
+        message: `Unsupported model: ${model}. Only gpt-4o is supported for manga panel generation.`
+      });
+    }
+  } catch (error) {
+    console.error('Error processing manga panel generation request:', error);
+    return res.status(500).json({
+      success: false,
+      message: `Error generating manga panel: ${error.message}`
+    });
+  }
+});
+
+// Manga panel generation status endpoint
+app.get('/api/generate-manga-panel/status/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  
+  // Check if we have the job in memory
+  if (!global.jobs || !global.jobs.has(jobId)) {
+    return res.status(404).json({
+      success: false,
+      message: 'Job not found'
+    });
+  }
+  
+  const job = global.jobs.get(jobId);
+  
+  // Return appropriate response based on job state
+  if (job.state === 'completed') {
+    return res.json({
+      success: true,
+      state: 'completed',
+      progress: 100,
+      result: job.result
+    });
+  } else if (job.state === 'failed') {
+    return res.json({
+      success: false,
+      state: 'failed',
+      message: job.error || 'Unknown error occurred'
+    });
+  } else {
+    // Still processing
+    return res.json({
+      success: true,
+      state: job.state,
+      progress: job.progress || 0
+    });
+  }
+});
+
 // Get render status endpoint
 app.get('/api/render-status/:jobId', (req, res) => {
   const { jobId } = req.params;
@@ -1361,7 +1490,78 @@ function processRenderQueue() {
   }, 1000);
 }
 
-// Start server
-app.listen(PORT, '0.0.0.0', () => {
+// Test endpoint for GPT-4o integration
+app.get('/api/test-gpt4o', async (req, res) => {
+  if (!openai) {
+    return res.status(503).json({ success: false, message: 'OpenAI client not initialized' });
+  }
+  
+  try {
+    console.log('Testing GPT-4o API connection...');
+    
+    // Test simple text completion to verify API connection
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: "You are a helpful assistant." },
+        { role: "user", content: "Say hello!" }
+      ],
+      max_tokens: 10
+    });
+    
+    const response = completion.choices[0].message.content;
+    
+    return res.json({
+      success: true,
+      message: 'GPT-4o API connection verified',
+      response
+    });
+  } catch (error) {
+    console.error('Error testing GPT-4o:', error);
+    return res.status(500).json({
+      success: false,
+      message: `Error testing GPT-4o: ${error.message}`
+    });
+  }
+});
+
+// Start server and capture the server instance
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}, bound to all interfaces`);
-}); 
+});
+
+// Function to gracefully shut down the server
+const gracefulShutdown = async () => {
+  console.log('Received shutdown signal. Starting graceful shutdown...');
+  
+  try {
+    // Close HTTP server first
+    server.close(() => {
+      console.log('HTTP server closed.');
+    });
+    
+    // Close Redis connection if available
+    if (redis) {
+      console.log('Closing Redis connection...');
+      await redis.quit();
+      console.log('Redis connection closed.');
+    }
+    
+    // Close queues if they exist
+    if (renderQueue) {
+      console.log('Closing render queue...');
+      await renderQueue.close();
+      console.log('Render queue closed.');
+    }
+    
+    console.log('All connections closed. Shutting down gracefully.');
+    process.exit(0);
+  } catch (error) {
+    console.error('Error during graceful shutdown:', error);
+    process.exit(1);
+  }
+};
+
+// Listen for termination signals
+process.on('SIGINT', gracefulShutdown);   // For Ctrl+C
+process.on('SIGTERM', gracefulShutdown);  // For kill command 
