@@ -3,8 +3,7 @@ import {
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   signOut,
-  updateProfile,
-  OAuthProvider
+  updateProfile
 } from "firebase/auth";
 import { auth, googleProvider } from "./config";
 
@@ -22,45 +21,12 @@ export const signInWithGoogle = async () => {
       error: null 
     };
   } catch (error) {
-    return { user: null, isNewUser: false, error: error.message };
-  }
-};
-
-// Sign in with Apple
-export const signInWithApple = async () => {
-  try {
-    const appleProvider = new OAuthProvider('apple.com');
-    appleProvider.addScope('email');
-    appleProvider.addScope('name');
-    
-    const result = await signInWithPopup(auth, appleProvider);
-    return { user: result.user, error: null };
-  } catch (error) {
-    return { user: null, error: error.message };
-  }
-};
-
-// Create Apple credential for authentication
-export const createAppleCredential = (idToken, rawNonce, fullName = null) => {
-  return OAuthProvider.credential(
-    'apple.com',
-    idToken,
-    rawNonce,
-    fullName
-  );
-};
-
-// Revoke Apple token and delete account
-export const revokeAppleTokenAndDeleteAccount = async (authorizationCode) => {
-  try {
-    await auth.revokeToken(authorizationCode);
-    const user = auth.currentUser;
-    if (user) {
-      await user.delete();
+    console.error("Google sign-in error:", error);
+    // Check if the error is related to popup blocking
+    if (error.code === 'auth/popup-blocked' || error.code === 'auth/popup-closed-by-user') {
+      console.warn("Popup was blocked or closed by user. This is expected behavior.");
     }
-    return { error: null };
-  } catch (error) {
-    return { error: error.message };
+    return { user: null, isNewUser: false, error: error.message };
   }
 };
 

@@ -10,7 +10,7 @@ const rateLimit = require('express-rate-limit');
 const { RedisStore } = require('rate-limit-redis');
 const Redis = require('ioredis');
 const Queue = require('bull');
-const FastRunPodComfyUIClient = require('../test/fast-runpod-client');
+const FastRunPodComfyUIClient = require('./test/fast-runpod-client');
 const { OpenAI } = require('openai');
 
 // Load environment variables

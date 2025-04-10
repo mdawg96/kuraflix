@@ -5,16 +5,15 @@ import { firestoreService } from './firestoreService';
 /**
  * API URL Configuration
  * 
- * IMPORTANT: The API_URL constant no longer includes the '/api' path segment.
- * When adding new endpoints, use the appropriate path for the backend API.
+ * IMPORTANT: All backend API endpoints must include the '/api' path segment.
+ * This is required to match the server routes defined in backend/server.js.
  * 
  * Correct endpoint examples:  
- *   - '/generate-manga-panel'
- *   - '/generate-character'
- *   - '/scenes'
+ *   - '/api/generate-manga-panel'
+ *   - '/api/generate-character'
+ *   - '/api/scenes'
  * 
- * If the backend structure changes in the future, only update the API_URL constant,
- * not all the individual endpoints.
+ * If the backend structure changes in the future, update all endpoints accordingly.
  */
 
 // Configure the base URL for backend API (not Firebase)
@@ -23,8 +22,8 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
 
 console.log('API Configuration:', {
   backendApiUrl: API_URL,
-  fullExampleUrl: `${API_URL}/generate-manga-panel`,
-  note: 'API_URL no longer includes /api path, endpoints are relative to base URL',
+  fullExampleUrl: `${API_URL}/api/generate-manga-panel`,
+  note: 'API endpoints should include /api path prefix for backend server endpoints',
   environment: import.meta.env.VITE_APP_ENV || 'development',
   firebase: {
     projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'configured in config.js',
@@ -131,7 +130,7 @@ export const characterAPI = {
   // Generate a character image (still uses backend API)
   generateCharacter: async (characterData) => {
     try {
-      const response = await apiClient.post('/generate-character', characterData);
+      const response = await apiClient.post('/api/generate-character', characterData);
       return response.data;
     } catch (error) {
       console.error('Error generating character:', error);
@@ -189,25 +188,25 @@ export const characterAPI = {
 
 // Scene API still uses backend
 export const sceneAPI = {
-  generateScene: (data) => apiClient.post('/generate-scene', data),
-  getScenes: () => apiClient.get('/scenes'),
-  getScene: (id) => apiClient.get(`/scenes/${id}`),
-  saveScene: (data) => apiClient.post('/scenes', data),
-  updateScene: (id, data) => apiClient.put(`/scenes/${id}`, data),
-  deleteScene: (id) => apiClient.delete(`/scenes/${id}`),
+  generateScene: (data) => apiClient.post('/api/generate-scene', data),
+  getScenes: () => apiClient.get('/api/scenes'),
+  getScene: (id) => apiClient.get(`/api/scenes/${id}`),
+  saveScene: (data) => apiClient.post('/api/scenes', data),
+  updateScene: (id, data) => apiClient.put(`/api/scenes/${id}`, data),
+  deleteScene: (id) => apiClient.delete(`/api/scenes/${id}`),
 };
 
 // Voice API still uses backend
 export const voiceAPI = {
-  generateVoice: (data) => apiClient.post('/generate-voice', data),
+  generateVoice: (data) => apiClient.post('/api/generate-voice', data),
 };
 
 // Manga API - mix of Firebase and backend API
 export const mangaAPI = {
   // Backend API for AI generation
-  generatePanel: (data) => apiClient.post('/generate-manga-panel', data),
-  checkGenerationStatus: (jobId) => apiClient.get(`/generate-manga-panel/status/${jobId}`),
-  testGPT4o: () => apiClient.get('/test-gpt4o'),
+  generatePanel: (data) => apiClient.post('/api/generate-manga-panel', data),
+  checkGenerationStatus: (jobId) => apiClient.get(`/api/generate-manga-panel/status/${jobId}`),
+  testGPT4o: () => apiClient.get('/api/test-gpt4o'),
   
   // Firebase for data storage
   getMangaStories: async () => {
@@ -258,13 +257,13 @@ export const mangaAPI = {
 
 // Episode API still uses backend
 export const episodeAPI = {
-  renderEpisode: (data) => apiClient.post('/render-episode', data),
-  getRenderStatus: (jobId) => apiClient.get(`/render-status/${jobId}`),
-  getEpisodes: () => apiClient.get('/episodes'),
-  getEpisode: (id) => apiClient.get(`/episodes/${id}`),
-  saveEpisode: (data) => apiClient.post('/episodes', data),
-  updateEpisode: (id, data) => apiClient.put(`/episodes/${id}`, data),
-  deleteEpisode: (id) => apiClient.delete(`/episodes/${id}`),
+  renderEpisode: (data) => apiClient.post('/api/render-episode', data),
+  getRenderStatus: (jobId) => apiClient.get(`/api/render-status/${jobId}`),
+  getEpisodes: () => apiClient.get('/api/episodes'),
+  getEpisode: (id) => apiClient.get(`/api/episodes/${id}`),
+  saveEpisode: (data) => apiClient.post('/api/episodes', data),
+  updateEpisode: (id, data) => apiClient.put(`/api/episodes/${id}`, data),
+  deleteEpisode: (id) => apiClient.delete(`/api/episodes/${id}`),
 };
 
 export default {

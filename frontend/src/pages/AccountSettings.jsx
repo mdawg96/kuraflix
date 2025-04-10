@@ -1,96 +1,33 @@
-import React, { useState, useContext } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AuthContext } from '../App';
-import { revokeAppleTokenAndDeleteAccount } from '../firebase/auth';
-import { generateRandomString, sha256 } from '../utils/cryptoUtils';
+import { useAuth } from '../context/AuthContext';
+import { logOut } from '../firebase/auth';
+import { deleteUser } from 'firebase/auth';
 
 const AccountSettings = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const { currentUser, setCurrentUser, setIsLoggedIn } = useContext(AuthContext);
+  const { currentUser } = useAuth();
   const navigate = useNavigate();
 
-  const isAppleUser = currentUser?.providerData?.[0]?.providerId === 'apple.com';
-
-  // Get a user-friendly error message
-  const getFriendlyErrorMessage = (errorCode) => {
-    switch (errorCode) {
-      case 'auth/requires-recent-login':
-        return 'For security reasons, please log in again before deleting your account.';
-      case 'auth/network-request-failed':
-        return 'Network connection issue. Please check your internet connection and try again.';
-      case 'auth/popup-closed-by-user':
-        return 'The process was cancelled because the popup was closed.';
-      case 'auth/operation-not-allowed':
-        return 'This operation is not allowed. Please contact support.';
-      default:
-        return 'An error occurred. Please try again or contact support.';
-    }
-  };
-
   const handleDeleteAccount = async () => {
-    if (!currentUser) return;
-    
-    if (window.confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
-      setLoading(true);
-      setError('');
-
-      try {
-        // Apple users need special handling for token revocation
-        if (isAppleUser) {
-          // For Apple users, we need to initiate a new Sign In with Apple flow
-          // to get a fresh authorization code
-          if (window.AppleID) {
-            // Generate a nonce
-            const nonce = generateRandomString(32);
-            const hashedNonce = await sha256(nonce);
-            
-            // Store the nonce in session storage for verification
-            sessionStorage.setItem('appleNonce', nonce);
-            
-            // Trigger Apple sign-in for token revocation
-            window.AppleID.auth.signIn({
-              clientId: import.meta.env.VITE_APPLE_CLIENT_ID,
-              scope: 'name email',
-              redirectURI: window.location.origin + '/apple-auth-callback',
-              state: 'delete-account',
-              nonce: hashedNonce
-            });
-            return;
-          } else {
-            setError('Apple Sign In is not available on this device. Please try using a different device.');
-          }
-        } else {
-          // For other providers, we can delete directly
-          await currentUser.delete();
-          setCurrentUser(null);
-          setIsLoggedIn(false);
-          navigate('/');
-        }
-      } catch (error) {
-        console.error('Error deleting account:', error);
-        setError(getFriendlyErrorMessage(error.code || error.message));
-      } finally {
-        setLoading(false);
-      }
+    if (!window.confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
+      return;
     }
-  };
 
-  // This would be called after returning from Apple auth flow
-  const handleAppleAuthCallback = async (authorizationCode) => {
+    setLoading(true);
     try {
-      const { error } = await revokeAppleTokenAndDeleteAccount(authorizationCode);
-      if (error) {
-        setError(getFriendlyErrorMessage(error.code || error));
-        return;
-      }
+      // For all providers, we can delete directly
+      await deleteUser(currentUser);
       
-      setCurrentUser(null);
-      setIsLoggedIn(false);
-      navigate('/');
+      // Log out (Firebase auth state will update automatically)
+      await logOut();
+      navigate('/', { state: { message: 'Your account has been deleted successfully.' } });
     } catch (error) {
-      console.error('Error in Apple callback:', error);
-      setError(getFriendlyErrorMessage(error.code || error.message));
+      console.error('Error deleting account:', error);
+      setError('Failed to delete account: ' + error.message);
+    } finally {
+      setLoading(false);
     }
   };
 

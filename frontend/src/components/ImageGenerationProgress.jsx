@@ -31,7 +31,7 @@ const ImageGenerationProgress = ({ jobId, onComplete }) => {
     const checkStatus = async () => {
       try {
         const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5001';
-        const response = await fetch(`${apiBaseUrl}/generate-manga-panel/status/${jobId}`);
+        const response = await fetch(`${apiBaseUrl}/api/generate-manga-panel/status/${jobId}`);
         const data = await response.json();
 
         if (!data.success) {

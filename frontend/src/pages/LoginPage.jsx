@@ -1,7 +1,7 @@
-import React, { useState, useContext } from 'react';
+import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { AuthContext } from '../App';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { useAuth } from '../context/AuthContext';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { auth } from '../firebase/config';
 import { signInWithGoogle } from '../firebase/auth';
 import UsernameSetupModal from '../components/UsernameSetupModal';
@@ -17,7 +17,8 @@ const LoginPage = () => {
   const [pendingGoogleUser, setPendingGoogleUser] = useState(null);
   
   const navigate = useNavigate();
-  const { setIsLoggedIn, setCurrentUser } = useContext(AuthContext);
+  // We don't need to get the setters from AuthContext anymore
+  // Firebase auth state will update automatically
 
   // Get a user-friendly error message
   const getFriendlyErrorMessage = (errorCode) => {
@@ -54,14 +55,10 @@ const LoginPage = () => {
       if (isLogin) {
         // Login user
         const userCredential = await signInWithEmailAndPassword(auth, email, password);
-        setCurrentUser(userCredential.user);
-        setIsLoggedIn(true);
         navigate('/studio');
       } else {
         // Register user
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        setCurrentUser(userCredential.user);
-        setIsLoggedIn(true);
         navigate('/studio');
       }
     } catch (error) {
@@ -88,8 +85,6 @@ const LoginPage = () => {
           setShowUsernameModal(true);
         } else {
           // Existing user, proceed normally
-          setCurrentUser(user);
-          setIsLoggedIn(true);
           navigate('/studio');
         }
       }
@@ -102,16 +97,13 @@ const LoginPage = () => {
   const handleUsernameComplete = (username) => {
     // Username has been set, close modal and complete login
     setShowUsernameModal(false);
-    setCurrentUser({...pendingGoogleUser, displayName: username});
-    setIsLoggedIn(true);
+    setPendingGoogleUser({...pendingGoogleUser, displayName: username});
     navigate('/studio');
   };
 
   const handleUsernameSkip = () => {
     // User skipped setting a username
     setShowUsernameModal(false);
-    setCurrentUser(pendingGoogleUser);
-    setIsLoggedIn(true);
     navigate('/studio');
   };
 

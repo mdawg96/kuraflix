@@ -1,10 +1,13 @@
-import React, { useContext } from 'react';
+import React from 'react';
 import { Link } from 'react-router-dom';
-import { AuthContext } from '../App';
+import { useAuth } from '../context/AuthContext';
 import fallbackImage from '../assets/images/placeholders/image.png';
 
 const HomePage = () => {
-  const { isLoggedIn, currentUser } = useContext(AuthContext);
+  const { currentUser, isAuthenticated } = useAuth();
+  
+  // For compatibility with existing code
+  const isLoggedIn = isAuthenticated;
 
   // Placeholder data for manga tiles - Added more for scrolling
   const mangaPlaceholders = [

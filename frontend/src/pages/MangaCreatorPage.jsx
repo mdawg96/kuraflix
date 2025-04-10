@@ -1,7 +1,10 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { mangaAPI, characterAPI } from '../services/api';
 import ImageGenerationProgress from '../components/ImageGenerationProgress';
+import { Bubble } from '../components';
+import { textBoxToBubbleProps, bubblePropsToTextBox, createTextBox, convertToYellBubble } from '../utils/bubbleUtils';
+import PageEditor from '../components/PageEditor';
 
 const MangaCreatorPageComponent = () => {
   console.log("PARENT: MangaCreatorPage render");
@@ -129,47 +132,28 @@ const MangaCreatorPageComponent = () => {
     setShowProjectSelector(true);
   };
   
-  // Create a default page with 5x3 grid of panels
+  // Create a default page with 4 rows and 3 columns per row
   function createDefaultPage() {
-    const rows = 5; // 5 vertical panels maximum
-    const cols = 3; // 3 horizontal panels default
-    
-    const panels = [];
-    for (let i = 0; i < rows; i++) {
-      const row = [];
-      for (let j = 0; j < cols; j++) {
-        row.push({
-          id: `${i}-${j}`,
-          type: 'rectangular', // default panel type
-          characters: [],
-          environment: '',
-          action: '',
-          image: null,
-          textBoxes: [],
-          position: { row: i, col: j },
-          // Add shape properties for non-rectangular panels
-          shape: {
-            type: 'rectangular', // rectangular, diagonal, polygonal, irregular
-            points: [], // For polygonal and irregular shapes
-            angle: 0, // For diagonal panels
-            clipPath: '' // CSS clip-path for custom shapes
-          },
-          colSpan: 1, // Default span is 1, can be increased for larger panels
-          rowSpan: 1  // Default span is 1, can be increased for larger panels
-        });
-      }
-      panels.push(row);
-    }
-    
+    const rows = 4;  // Changed from 3 to 4
+    const cols = 3;  // Changed from 4 to 3
+    const panels = Array(rows).fill().map(() => 
+      Array(cols).fill().map(() => ({
+        id: `panel-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        colSpan: 1,
+        rowSpan: 1,
+        textBoxes: []
+      }))
+    );
+
     return {
-      id: Date.now(),
-      panels,
+      id: `page-${Date.now()}`,
       layout: {
         rows,
         cols
       },
-      gutterSize: 'medium', // small, medium, large
-      backgroundColor: '#f5f5dc' // Default is light beige, manga-like color
+      panels,
+      gutterSize: 'medium',
+      backgroundColor: '#232323'
     };
   }
   
@@ -349,6 +333,7 @@ const MangaCreatorPageComponent = () => {
     const [generatedImage, setGeneratedImage] = useState(panel.image || null);
     const [generatedPrompt, setGeneratedPrompt] = useState('');  // For displaying the GPT-4o generated prompt
     const [textBoxes, setTextBoxes] = useState(panel.textBoxes || []);
+    const [selectedTextBoxId, setSelectedTextBoxId] = useState(null);
     const [draggedTextBoxId, setDraggedTextBoxId] = useState(null);
     const [characterTab, setCharacterTab] = useState('project');
     const [actionInputValue, setActionInputValue] = useState(panelState.action || '');
@@ -361,6 +346,9 @@ const MangaCreatorPageComponent = () => {
     const panelRef = useRef(null);
     const shouldReloadCharactersRef = useRef({ storyTitle });
     const prevStyleRef = useRef(styleType);
+    
+    // Get the currently selected text box
+    const selectedTextBox = textBoxes.find(box => box.id === selectedTextBoxId);
     
     // Handle panel prop changes
     useEffect(() => {
@@ -552,20 +540,24 @@ const MangaCreatorPageComponent = () => {
     const setAction = (act) => updatePanelProperty('action', act);
     const setLocalStyleType = (style) => updatePanelProperty('style', style);
     const setPanelType = (type) => updatePanelProperty('type', type);
-    const updatePanelImage = (img) => updatePanelProperty('image', img);
     const setShapeType = (type) => updatePanelProperty('shape', {...panelState.shape, type});
     const setAngle = (angle) => updatePanelProperty('shape', {...panelState.shape, angle});
     const setCustomClipPath = (path) => updatePanelProperty('shape', {...panelState.shape, clipPath: path});
     const setColSpan = (span) => updatePanelProperty('colSpan', span);
     const setRowSpan = (span) => updatePanelProperty('rowSpan', span);
+    const updatePanelImage = (img) => {
+      console.log(`Updating panel image to: ${img}`);
+      updatePanelProperty('image', img);
+      setGeneratedImage(img);
+    };
     
     // Style options
     const styleOptions = [
       { id: 'manga', name: 'Black & White Manga (Traditional)' },
       { id: 'anime', name: 'Anime Style (Colored)' },
       { id: 'realistic-manga', name: 'Realistic Manga (Detailed)' },
-      { id: 'chibi', name: 'Chibi Style (Cute)' },
-      { id: 'sketch', name: 'Sketch Style (Rough lines)' }
+      // { id: 'chibi', name: 'Chibi Style (Cute)' }, // Removed
+      // { id: 'sketch', name: 'Sketch Style (Rough lines)' } // Removed
     ];
     
     // Set initial edit phase based on whether image exists
@@ -573,6 +565,15 @@ const MangaCreatorPageComponent = () => {
       setEditPhase(panel.image ? 'styling' : 'content');
     }, [panel.image]);
     
+    // Sync generatedImage with panelState.image
+    React.useEffect(() => {
+      if (panelState.image && panelState.image !== generatedImage) {
+        console.log('Syncing generatedImage with panelState.image:', panelState.image);
+        setGeneratedImage(panelState.image);
+      }
+    }, [panelState.image, generatedImage]);
+    
+    // Get current list of characters based on active tab
     // Get current list of characters based on active tab
     const availableCharacters = characterTab === 'project' ? projectCharacters : allCharacters;
     
@@ -614,7 +615,7 @@ const MangaCreatorPageComponent = () => {
 
         // Log the API endpoint that will be used
         const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5001';
-        console.log('API endpoint:', `${apiBaseUrl}/generate-manga-panel`);
+        console.log('API endpoint:', `${apiBaseUrl}/api/generate-manga-panel`);
 
         // Call our API, specifying gpt-4o and sending character images
         const response = await mangaAPI.generatePanel({
@@ -695,26 +696,77 @@ const MangaCreatorPageComponent = () => {
     
     // Add new text box
     const addTextBox = (type) => {
-      const newTextBox = {
-        id: Date.now(),
-        type: type, // 'speech', 'thought', 'narration', etc.
+      const newTextBox = createTextBox(type, {
         text: '',
-        position: { x: 50, y: 50 },
-        style: { bold: false, italic: false, fontSize: 14 }
-      };
-      setTextBoxes([...textBoxes, newTextBox]);
+        position: { x: 150, y: 150 }, // More centered initial position
+        tailPosition: 'bottom'
+      });
+      console.log(`Adding new ${type} text box:`, newTextBox);
+      
+      setTextBoxes(current => {
+        const updated = [...current, newTextBox];
+        console.log(`Updated text boxes after adding (new count: ${updated.length}):`, updated);
+        return updated;
+      });
+      
+      // Select the newly created text box
+      setSelectedTextBoxId(newTextBox.id);
     };
     
     // Update text box
     const updateTextBox = (id, updates) => {
-      setTextBoxes(textBoxes.map(box => 
-        box.id === id ? { ...box, ...updates } : box
-      ));
+      console.log(`Updating text box ${id} with:`, updates);
+      
+      // Find the existing text box
+      const existingBox = textBoxes.find(box => box.id === id);
+      
+      if (!existingBox) {
+        console.warn(`Text box with ID ${id} not found!`);
+        return;
+      }
+      
+      // Create the updated box by deeply merging properties
+      const updatedBox = {
+        ...existingBox,
+        ...updates,
+      };
+      
+      // Handle style updates separately to properly merge nested objects
+      if (updates.style) {
+        updatedBox.style = {
+          ...existingBox.style,
+          ...updates.style
+        };
+      }
+      
+      // Update the text boxes array
+      setTextBoxes(currentBoxes => 
+        currentBoxes.map(box => box.id === id ? updatedBox : box)
+      );
+      
+      // If this update is for the currently selected text box, make sure we update the selection
+      if (selectedTextBoxId === id && updates.id && updates.id !== id) {
+        setSelectedTextBoxId(updates.id);
+      }
+      
+      console.log(`Updated text box:`, updatedBox);
     };
     
     // Remove text box
     const removeTextBox = (id) => {
-      setTextBoxes(textBoxes.filter(box => box.id !== id));
+      console.log(`Removing text box with ID: ${id}`);
+      
+      setTextBoxes(current => {
+        const updated = current.filter(box => box.id !== id);
+        console.log(`Updated text boxes after removing (new count: ${updated.length}):`, updated);
+        
+        // If we removed the selected text box, clear the selection
+        if (selectedTextBoxId === id) {
+          setSelectedTextBoxId(null);
+        }
+        
+        return updated;
+      });
     };
     
     // Handle save button click
@@ -742,7 +794,19 @@ const MangaCreatorPageComponent = () => {
     // Add handler for when generation is complete
     const handleGenerationComplete = (result) => {
       if (result && result.panel && result.panel.imageUrl) {
-        setGeneratedImage(result.panel.imageUrl);
+        console.log('Generation complete with image URL:', result.panel.imageUrl);
+        
+        // Update both the generated image for display and the panel state
+        const imageUrl = result.panel.imageUrl;
+        setGeneratedImage(imageUrl);
+        
+        // Update the panel state
+        setPanelState(prev => ({
+          ...prev,
+          image: imageUrl
+        }));
+        
+        // Move to styling phase
         setEditPhase('styling');
       }
     };
@@ -755,8 +819,8 @@ const MangaCreatorPageComponent = () => {
       const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5001';
       console.log('Current API configuration:', {
         baseUrl: apiBaseUrl,
-        testEndpoint: `${apiBaseUrl}/test-gpt4o`,
-        generateEndpoint: `${apiBaseUrl}/generate-manga-panel`
+        testEndpoint: `${apiBaseUrl}/api/test-gpt4o`,
+        generateEndpoint: `${apiBaseUrl}/api/generate-manga-panel`
       });
       
       const charactersWithImages = panelState.characters.map(character => {
@@ -975,14 +1039,6 @@ const MangaCreatorPageComponent = () => {
             >
               Styling
             </button>
-              <button
-                onClick={() => setEditPhase('layout')}
-                className={`px-4 py-2 font-comic ${editPhase === 'layout' 
-                  ? 'text-manga-green border-b-2 border-manga-green' 
-                  : 'text-gray-400 hover:text-gray-200'}`}
-              >
-                Layout
-              </button>
           </div>
           
           {/* Phase 1: Content Creation - Characters, Environment, Action */}
@@ -1029,6 +1085,8 @@ const MangaCreatorPageComponent = () => {
                     >
                       All Characters
                     </button>
+                    {/* Removed Debug button */}
+                    {/* 
                     <button
                       onClick={verifyCharacterImages}
                       className="ml-auto px-2 py-1 text-xs font-comic bg-gray-700 text-gray-300 hover:bg-gray-600 rounded"
@@ -1036,6 +1094,9 @@ const MangaCreatorPageComponent = () => {
                     >
                       Debug
                     </button>
+                    */}
+                    {/* Removed Reload button - Correctly commented out */}
+                    {/* 
                     <button
                       onClick={reloadCharacters}
                       className="ml-2 px-2 py-1 text-xs font-comic bg-gray-700 text-gray-300 hover:bg-gray-600 rounded flex items-center"
@@ -1046,6 +1107,7 @@ const MangaCreatorPageComponent = () => {
                       </svg>
                       Reload
                     </button>
+                    */}
                   </div>
                   
                   {/* Loading State */}
@@ -1196,9 +1258,10 @@ const MangaCreatorPageComponent = () => {
                     </svg>
                     Art Style
                   </h3>
-                  <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-5">
+                  {/* Adjusted grid for better spacing */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4"> {/* Changed grid columns */}
                     {styleOptions.map(style => (
-                <button
+                      <button
                         key={style.id}
                         onClick={() => {
                           console.log(`STYLES: Clicked style ${style.id}, current: ${panelState.style}`);
@@ -1218,7 +1281,7 @@ const MangaCreatorPageComponent = () => {
                         }`}
                       >
                         {style.name}
-                </button>
+                      </button>
                     ))}
                     </div>
               </div>
@@ -1270,16 +1333,6 @@ const MangaCreatorPageComponent = () => {
                     </>
                   )}
                 </button>
-
-                {/* Debug button - only visible in development mode */}
-                {process.env.NODE_ENV === 'development' && (
-                  <button
-                    onClick={verifyCharacterImages}
-                    className="mt-2 w-full px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded"
-                  >
-                    Debug: Verify Character Images
-                  </button>
-                )}
               </div>
               
               <div className="flex justify-end mt-6 space-x-3">
@@ -1293,155 +1346,379 @@ const MangaCreatorPageComponent = () => {
             </div>
           )}
           
-          {/* Phase 2: Styling - Panel Type, Text Boxes */}
+          {/* Phase 2: Styling - Text Boxes & Appearance */}
           {editPhase === 'styling' && (
-            <div className="space-y-6 relative z-10">
-              {/* Image Preview */}
-              <div className="mb-4">
+            <div className="flex flex-col lg:flex-row gap-6 relative z-10">
+              {/* Left Column: Image Preview */}
+              <div className="lg:w-1/2 xl:w-3/5 flex-shrink-0">
                 {generatedImage && (
-                  <div className="relative border-[3px] border-ink-black rounded-lg overflow-hidden shadow-manga-lg">
+                  <div 
+                    className="relative border-[3px] border-ink-black rounded-lg overflow-hidden shadow-manga-lg mb-4" 
+                    style={{ minHeight: '300px' }}
+                    ref={panelRef}
+                    onClick={(e) => {
+                      // When clicking on the panel background, deselect any text box
+                      // but only if the click was directly on the panel, not on a bubble
+                      if (e.currentTarget === e.target) {
+                        console.log('Panel background clicked, deselecting text box');
+                        setSelectedTextBoxId(null);
+                      }
+                    }}
+                  >
                     <img 
                       src={generatedImage} 
                       alt="Generated panel" 
                       className="w-full" 
+                      onError={(e) => {
+                        console.error('Error loading generated image:', e);
+                        console.log('Image URL was:', generatedImage);
+                        // Fallback to a placeholder if image fails to load
+                        e.target.onerror = null; // Prevent infinite loop
+                        e.target.src = '/assets/images/placeholders/image.png';
+                      }}
+                      onClick={(e) => {
+                        // Only deselect if clicking directly on the image (not on bubbles)
+                        if (e.currentTarget === e.target) {
+                          console.log('Panel image clicked, deselecting text box');
+                          setSelectedTextBoxId(null);
+                        }
+                      }}
                     />
                     <div className="absolute inset-0 pointer-events-none manga-panel-overlay"></div>
-                  </div>
-                )}
-                
-                {/* Generated Prompt Display, only if it exists in panel state */}
-                {panelState.prompt && (
-                  <div className="mt-3 p-3 bg-gray-900 rounded-lg border border-anime-indigo/40 text-sm text-gray-300 font-comic">
-                    <h4 className="text-white text-sm font-bold mb-1 flex items-center">
-                      <svg className="w-4 h-4 mr-1 text-anime-pink" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                      GPT-4o Generated Prompt
-                    </h4>
-                    <div className="text-xs font-mono bg-black/30 p-2 rounded max-h-32 overflow-y-auto">
-                      {panelState.prompt}
+                    
+                    {/* Draggable Text Bubbles */}
+                    <div className="absolute inset-0 overflow-hidden">
+                      {textBoxes.map(box => {
+                        // Convert the textBox object to Bubble props
+                        const bubbleProps = textBoxToBubbleProps(box, {
+                          onTextChange: (newText) => updateTextBox(box.id, { text: newText }),
+                          onPositionChange: (newPosition) => updateTextBox(box.id, { position: newPosition }),
+                          onRemove: () => removeTextBox(box.id),
+                          onSelect: () => {
+                            console.log(`Selecting text box with ID: ${box.id}`, box);
+                            setSelectedTextBoxId(box.id);
+                          },
+                          selected: selectedTextBoxId === box.id
+                        });
+                        
+                        console.log(`Rendering bubble for box ${box.id}, selected: ${selectedTextBoxId === box.id}`);
+                        
+                        // Return the Bubble component with props
+                        return (
+                          <Bubble
+                            key={box.id}
+                            {...bubbleProps}
+                          />
+                        );
+                      })}
                     </div>
                   </div>
                 )}
               </div>
               
-              {/* Panel Type */}
-              <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 shadow-inner">
-                <h3 className="text-white font-comic font-medium mb-3 flex items-center">
-                  <svg className="w-5 h-5 mr-2 text-manga-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
-                  </svg>
-                  Panel Type
-                </h3>
-                <div className="flex space-x-3">
-                  <button 
-                    onClick={() => setPanelType('rectangular')}
-                    className={`flex-1 px-3 py-2 rounded-lg font-comic ${panelType === 'rectangular' ? 'bg-gradient-to-r from-anime-indigo to-anime-pink text-white shadow-lg' : 'bg-gray-700 text-gray-300 border border-gray-600'}`}
-                  >
-                    Rectangular
-                  </button>
-                  <button 
-                    onClick={() => setPanelType('diagonal')}
-                    className={`flex-1 px-3 py-2 rounded-lg font-comic ${panelType === 'diagonal' ? 'bg-gradient-to-r from-anime-indigo to-anime-pink text-white shadow-lg' : 'bg-gray-700 text-gray-300 border border-gray-600'}`}
-                  >
-                    Diagonal
-                  </button>
-                </div>
-              </div>
-              
-              {/* Text Boxes */}
-              <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 shadow-inner">
-                <h3 className="text-white font-comic font-medium mb-3 flex items-center">
-                  <svg className="w-5 h-5 mr-2 text-manga-green" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-                  </svg>
-                  Text Bubbles
-                </h3>
-                <div className="grid grid-cols-3 gap-2">
-                  <button 
-                    onClick={() => addTextBox('speech')}
-                    className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg font-comic border border-gray-600 transition-colors duration-200 flex flex-col items-center"
-                  >
-                    <div className="speech-bubble-icon w-8 h-8 mb-1 bg-white rounded-full border border-gray-700 flex items-center justify-center text-black">
-                      <span className="text-xs">"..."</span>
-                    </div>
-                    Speech
-                  </button>
-                  <button 
-                    onClick={() => addTextBox('thought')}
-                    className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg font-comic border border-gray-600 transition-colors duration-200 flex flex-col items-center"
-                  >
-                    <div className="thought-bubble-icon w-8 h-8 mb-1 bg-white rounded-full border border-gray-700 flex items-center justify-center text-black">
-                      <span className="text-xs">...</span>
-                    </div>
-                    Thought
-                  </button>
-                  <button 
-                    onClick={() => addTextBox('narration')}
-                    className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg font-comic border border-gray-600 transition-colors duration-200 flex flex-col items-center"
-                  >
-                    <div className="narration-box-icon w-8 h-8 mb-1 bg-white border border-gray-700 flex items-center justify-center text-black">
-                      <span className="text-xs">Narr</span>
-                    </div>
-                    Narration
-                  </button>
-                </div>
-                
-                {textBoxes.length === 0 ? (
-                  <div className="mt-4 p-3 bg-gray-700 rounded-lg border border-gray-600 text-center text-gray-400 text-sm font-comic">
-                    No text bubbles added yet. Add one using the buttons above.
-                  </div>
-                ) : (
-                  <div className="mt-4 space-y-3">
-                    {textBoxes.map(box => (
-                      <div key={box.id} className="flex items-center bg-gray-700 p-3 rounded-lg border border-gray-600">
-                        <div className={`w-8 h-8 flex-shrink-0 rounded-full ${box.type === 'narration' ? 'bg-paper-white rounded-sm' : 'bg-white'} border border-gray-700 flex items-center justify-center text-xs`}>
-                          {box.type === 'speech' && '"..."'}
-                          {box.type === 'thought' && '...'}
-                          {box.type === 'narration' && 'Narr'}
-                        </div>
-                        <input
-                          type="text"
-                          value={box.text}
-                          onChange={(e) => updateTextBox(box.id, { text: e.target.value })}
-                          placeholder={`Enter ${box.type} text...`}
-                          className="ml-3 flex-grow bg-gray-800 border border-gray-600 px-3 py-2 rounded-lg text-white text-sm font-comic focus:border-anime-pink focus:ring-1 focus:ring-anime-pink"
-                        />
-                        <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              removeTextBox(box.id);
-                            }}
-                          className="ml-2 p-1 text-gray-400 hover:text-red-400 bg-gray-800 rounded-full hover:bg-gray-700 transition-colors duration-200"
-                        >
-                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
+              {/* Right Column: Text Bubble Controls */}
+              <div className="lg:w-1/2 xl:w-2/5 space-y-4 flex-grow">
+                {/* Text Boxes Section */}
+                <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 shadow-inner">
+                  <h3 className="text-white font-comic font-medium mb-3 flex items-center">
+                    <svg className="w-5 h-5 mr-2 text-manga-green" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                    </svg>
+                    Text Bubbles
+                  </h3>
+                  <div className="grid grid-cols-4 gap-2">
+                    <button 
+                      onClick={() => addTextBox('speech')}
+                      className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg font-comic border border-gray-600 transition-colors duration-200 flex flex-col items-center"
+                    >
+                      <div className="speech-bubble-icon w-8 h-8 mb-1 bg-white rounded-full border border-gray-700 flex items-center justify-center text-black">
+                        <span className="text-xs">"..."</span>
                       </div>
-                    ))}
+                      Speech
+                    </button>
+                    <button 
+                      onClick={() => addTextBox('thought')}
+                      className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg font-comic border border-gray-600 transition-colors duration-200 flex flex-col items-center"
+                    >
+                      <div className="thought-bubble-icon w-8 h-8 mb-1 bg-white rounded-full border border-gray-700 flex items-center justify-center text-black">
+                        <span className="text-xs">...</span>
+                      </div>
+                      Thought
+                    </button>
+                    <button 
+                      onClick={() => addTextBox('narration')}
+                      className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg font-comic border border-gray-600 transition-colors duration-200 flex flex-col items-center"
+                    >
+                      <div className="narration-box-icon w-8 h-8 mb-1 bg-white border border-gray-700 flex items-center justify-center text-black">
+                        <span className="text-xs">Narr</span>
+                      </div>
+                      Narration
+                    </button>
+                    <button 
+                      onClick={() => addTextBox('yell')}
+                      className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg font-comic border border-gray-600 transition-colors duration-200 flex flex-col items-center"
+                    >
+                      <div className="yell-bubble-icon w-8 h-8 mb-1 bg-white border border-gray-700 flex items-center justify-center text-black font-bold text-lg">
+                        ! {/* Simplified icon */}
+                      </div>
+                      Yell
+                    </button>
                   </div>
-                )}
-              </div>
-              
-              <div className="flex justify-end mt-6 space-x-3">
-                <button 
-                  onClick={onClose}
-                  className="manga-btn bg-gradient-to-r from-gray-700 to-gray-900 text-white rounded-lg"
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={() => {
-                    handleSave();
-                    // Only close the editor when Save is explicitly clicked
-                    setShowPanelEditor(false);
-                  }}
-                  className="manga-btn bg-gradient-to-r from-anime-indigo to-anime-pink text-white rounded-lg shadow-manga hover:shadow-manga-lg transform hover:scale-105 transition-all duration-200"
-                >
-                  Save Panel
-                </button>
-              </div>
+                  
+                  {textBoxes.length === 0 ? (
+                    <div className="mt-4 p-3 bg-gray-700 rounded-lg border border-gray-600 text-center text-gray-400 text-sm font-comic">
+                      No text bubbles added yet. Add one using the buttons above.
+                    </div>
+                  ) : (
+                    <div className="mt-4 space-y-3">
+                      {textBoxes.map(box => (
+                        <div 
+                          key={box.id} 
+                          className={`flex items-center p-3 rounded-lg border border-gray-600 transition-colors duration-150 ${
+                            selectedTextBoxId === box.id ? 'bg-gray-600 ring-2 ring-anime-pink' : 'bg-gray-700'
+                          }`}
+                          // Optional: Click to select from the list too
+                          onClick={() => setSelectedTextBoxId(box.id)} 
+                        >
+                          <div className={`w-8 h-8 flex-shrink-0 rounded-full ${box.type === 'narration' ? 'bg-paper-white rounded-sm' : box.type === 'yell' ? 'bg-yellow-100' : 'bg-white'} border border-gray-700 flex items-center justify-center text-xs`}>
+                            {box.type === 'speech' && '"..."'}
+                            {box.type === 'thought' && '...'}
+                            {box.type === 'narration' && 'Narr'}
+                            {box.type === 'yell' && '!'}
+                          </div>
+                          <input
+                            type="text"
+                            value={box.text}
+                            onChange={(e) => updateTextBox(box.id, { text: e.target.value })}
+                            placeholder={`Enter ${box.type} text...`}
+                            className="ml-3 flex-grow bg-gray-800 border border-gray-600 px-3 py-2 rounded-lg text-white text-sm font-comic focus:border-anime-pink focus:ring-1 focus:ring-anime-pink"
+                          />
+                          <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeTextBox(box.id);
+                              }}
+                            className="ml-2 p-1 text-gray-400 hover:text-red-400 bg-gray-800 rounded-full hover:bg-gray-700 transition-colors duration-200"
+                          >
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  
+                  {/* Bubble Style Editor (Now part of the right column) */}
+                  {textBoxes.length > 0 && (
+                    <div className="mt-4 p-4 bg-gray-700 rounded-lg border border-gray-600">
+                      <h4 className="text-white text-sm font-bold mb-3 flex items-center">
+                        <svg className="w-4 h-4 mr-1 text-manga-green" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                        {selectedTextBox ? `Edit "${selectedTextBox.type}" Bubble` : 'Bubble Style Options'}
+                      </h4>
+                      
+                      {!selectedTextBox ? (
+                        <div className="text-center text-gray-300 text-sm p-2">
+                          Click on a text bubble to edit its style
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-gray-300 text-xs mb-1">
+                              Text Color
+                            </label>
+                            <div className="flex items-center">
+                              <input 
+                                type="color" 
+                                value={selectedTextBox.style.color || '#000000'}
+                                onChange={(e) => {
+                                  updateTextBox(selectedTextBox.id, { 
+                                    style: { 
+                                      ...selectedTextBox.style, 
+                                      color: e.target.value 
+                                    } 
+                                  });
+                                }}
+                                className="w-8 h-8 cursor-pointer rounded border border-gray-600"
+                              />
+                            </div>
+                          </div>
+                          
+                          <div>
+                            <label className="block text-gray-300 text-xs mb-1">
+                              Background
+                            </label>
+                            <div className="flex items-center">
+                              <input 
+                                type="color" 
+                                value={selectedTextBox.style.backgroundColor || '#FFFFFF'}
+                                onChange={(e) => {
+                                  updateTextBox(selectedTextBox.id, { 
+                                    style: { 
+                                      ...selectedTextBox.style, 
+                                      backgroundColor: e.target.value 
+                                    } 
+                                  });
+                                }}
+                                className="w-8 h-8 cursor-pointer rounded border border-gray-600"
+                              />
+                            </div>
+                          </div>
+                          
+                          <div>
+                            <label className="block text-gray-300 text-xs mb-1">
+                              Font Size
+                            </label>
+                            <div className="flex items-center">
+                              <input 
+                                type="range" 
+                                min="8" 
+                                max="48" // Increased max font size
+                                value={selectedTextBox.style.fontSize || 14}
+                                onChange={(e) => {
+                                  updateTextBox(selectedTextBox.id, { 
+                                    style: { 
+                                      ...selectedTextBox.style, 
+                                      fontSize: parseInt(e.target.value) 
+                                    } 
+                                  });
+                                }}
+                                className="w-full cursor-pointer accent-anime-pink"
+                              />
+                              <span className="ml-2 text-xs text-gray-300">
+                                {selectedTextBox.style.fontSize || 14}px
+                              </span>
+                            </div>
+                          </div>
+                          
+                          {/* Conditionally render Tail Position options */}
+                          {(selectedTextBox.type === 'speech' || selectedTextBox.type === 'thought') ? (
+                            <div>
+                              <label className="block text-gray-300 text-xs mb-1">
+                                Tail Position
+                              </label>
+                              <div className="grid grid-cols-2 gap-1">
+                                <button
+                                  onClick={() => {
+                                    updateTextBox(selectedTextBox.id, { 
+                                      tailPosition: 'top'
+                                    });
+                                  }}
+                                  className={`px-2 py-1 text-xs rounded font-comic ${
+                                    (selectedTextBox.tailPosition || 'bottom') === 'top'
+                                      ? 'bg-anime-pink text-white' 
+                                      : 'bg-gray-600 text-gray-300'
+                                  }`}
+                                >
+                                  Top
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    updateTextBox(selectedTextBox.id, { 
+                                      tailPosition: 'right'
+                                    });
+                                  }}
+                                  className={`px-2 py-1 text-xs rounded font-comic ${
+                                    (selectedTextBox.tailPosition || 'bottom') === 'right'
+                                      ? 'bg-anime-pink text-white' 
+                                      : 'bg-gray-600 text-gray-300'
+                                  }`}
+                                >
+                                  Right
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    updateTextBox(selectedTextBox.id, { 
+                                      tailPosition: 'bottom'
+                                    });
+                                  }}
+                                  className={`px-2 py-1 text-xs rounded font-comic ${
+                                    (selectedTextBox.tailPosition || 'bottom') === 'bottom'
+                                      ? 'bg-anime-pink text-white' 
+                                      : 'bg-gray-600 text-gray-300'
+                                  }`}
+                                >
+                                  Bottom
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    updateTextBox(selectedTextBox.id, { 
+                                      tailPosition: 'left'
+                                    });
+                                  }}
+                                  className={`px-2 py-1 text-xs rounded font-comic ${
+                                    (selectedTextBox.tailPosition || 'bottom') === 'left'
+                                      ? 'bg-anime-pink text-white' 
+                                      : 'bg-gray-600 text-gray-300'
+                                  }`}
+                                >
+                                  Left
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                          
+                          <div className="col-span-2 flex space-x-3 mt-2">
+                            <button
+                              onClick={() => {
+                                updateTextBox(selectedTextBox.id, { 
+                                  style: { 
+                                    ...selectedTextBox.style, 
+                                    bold: !selectedTextBox.style.bold 
+                                  } 
+                                });
+                              }}
+                              className={`flex-1 px-2 py-1 text-xs rounded font-comic ${
+                                selectedTextBox.style.bold 
+                                  ? 'bg-anime-pink text-white' 
+                                  : 'bg-gray-600 text-gray-300'
+                              }`}
+                            >
+                              <strong>B</strong>
+                            </button>
+                            
+                            <button
+                              onClick={() => {
+                                updateTextBox(selectedTextBox.id, { 
+                                  style: { 
+                                    ...selectedTextBox.style, 
+                                    italic: !selectedTextBox.style.italic 
+                                  } 
+                                });
+                              }}
+                              className={`flex-1 px-2 py-1 text-xs rounded font-comic ${
+                                selectedTextBox.style.italic 
+                                  ? 'bg-anime-pink text-white' 
+                                  : 'bg-gray-600 text-gray-300'
+                              }`}
+                            >
+                              <em>I</em>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                
+                {/* Navigation and Confirm Buttons */}
+                <div className="flex justify-end mt-4">
+                  <button 
+                    onClick={() => {
+                      handleSave();
+                      onClose();
+                    }}
+                    className="px-4 py-2 bg-gradient-to-r from-anime-indigo to-anime-pink text-white rounded-lg font-comic transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105 flex items-center"
+                  >
+                    <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Confirm Panel
+                  </button>
+                </div>
+              </div> 
             </div>
           )}
           </div>
@@ -1625,7 +1902,7 @@ const MangaCreatorPageComponent = () => {
   const handlePanelEditorClose = useCallback(() => {
     console.log("Panel editor close handler called");
     setShowPanelEditor(false);
-    setSelectedPanel(null);
+    // Don't set selectedPanel to null so it stays selected after closing
   }, []);
 
   return (
@@ -1696,415 +1973,31 @@ const MangaCreatorPageComponent = () => {
           </div>
         </div>
       ) : (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex justify-between items-center mb-8">
-          <div>
-              <h1 className="text-3xl font-bold text-white">Manga Studio</h1>
-              <p className="text-gray-400 mt-1">Create your manga with custom panels and characters</p>
-          </div>
-          
-          <div className="flex space-x-3">
-              <button
-                onClick={goBackToProjects}
-                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors duration-300 mr-2"
-              >
-                Back to Projects
-              </button>
-            <button 
-              onClick={() => setShowPublishModal(true)}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors duration-300"
-            >
-              Publish
-            </button>
-          </div>
-        </div>
-        
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Main Comic Page Display - Takes 2/3 of the space */}
-            <div className="lg:col-span-2 bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-xl font-bold text-white">Page Editor</h2>
-              <div className="flex space-x-2">
-                  {pages.length > 1 && (
-                <button 
-                      onClick={deletePage}
-                      className="bg-red-600 hover:bg-red-700 text-white rounded p-1.5 text-sm"
-                      title="Delete current page"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                </button>
-                  )}
-              </div>
-            </div>
-            
-              {/* Page Layout Controls */}
-              <div className="bg-gray-700 p-4 rounded-lg mb-4 flex flex-wrap gap-3 items-center">
-                <div className="flex items-center">
-                  <label className="text-white text-sm mr-2">Columns:</label>
-                  <div className="flex">
-              <button 
-                      onClick={() => adjustLayout(pages[currentPage].layout.rows, Math.max(1, pages[currentPage].layout.cols - 1))}
-                      className="px-2 py-1 bg-gray-800 text-white rounded-l border border-gray-600"
-                      title="Decrease columns"
-              >
-                      -
-              </button>
-                    <span className="px-3 py-1 bg-gray-900 text-white border-t border-b border-gray-600">
-                      {pages[currentPage].layout.cols}
-                    </span>
-              <button 
-                      onClick={() => adjustLayout(pages[currentPage].layout.rows, Math.min(5, pages[currentPage].layout.cols + 1))}
-                      className="px-2 py-1 bg-gray-800 text-white rounded-r border border-gray-600"
-                      title="Increase columns"
-                    >
-                      +
-              </button>
-            </div>
-          </div>
-          
-                <div className="flex items-center">
-                  <label className="text-white text-sm mr-2">Rows:</label>
-                  <div className="flex">
-                    <button 
-                      onClick={() => adjustLayout(Math.max(1, pages[currentPage].layout.rows - 1), pages[currentPage].layout.cols)}
-                      className="px-2 py-1 bg-gray-800 text-white rounded-l border border-gray-600"
-                      title="Decrease rows"
-                    >
-                      -
-                    </button>
-                    <span className="px-3 py-1 bg-gray-900 text-white border-t border-b border-gray-600">
-                      {pages[currentPage].layout.rows}
-                    </span>
-                    <button 
-                      onClick={() => adjustLayout(Math.min(8, pages[currentPage].layout.rows + 1), pages[currentPage].layout.cols)}
-                      className="px-2 py-1 bg-gray-800 text-white rounded-r border border-gray-600"
-                      title="Increase rows"
-                    >
-                      +
-                    </button>
-            </div>
-            </div>
-                
-                <div className="flex items-center">
-                  <label className="text-white text-sm mr-2">Gutter:</label>
-              <select 
-                value={pages[currentPage].gutterSize || 'medium'}
-                onChange={(e) => {
+        <div className="max-w-[95vw] mx-auto">
+          {/* Page Editor Component with enhanced row controls */}
+          <PageEditor
+            pages={pages}
+            currentPage={currentPage}
+            setCurrentPage={setCurrentPage}
+            selectedPanel={selectedPanel}
+            onPanelClick={handlePanelClick}
+            onAddPage={addNewPage}
+            onDeletePage={deletePage}
+            onAdjustLayout={adjustLayout}
+            onUpdatePanel={(updatedPage) => {
                   const newPages = [...pages];
-                  newPages[currentPage].gutterSize = e.target.value;
+              newPages[currentPage] = updatedPage;
                   setPages(newPages);
                 }}
-                    className="bg-gray-800 text-white border border-gray-600 rounded px-2 py-1 text-sm"
-              >
-                <option value="small">Small</option>
-                <option value="medium">Medium</option>
-                <option value="large">Large</option>
-              </select>
-            </div>
-                
-                <div className="flex items-center">
-                  <label className="text-white text-sm mr-2">Background:</label>
-                  <div className="flex items-center space-x-2">
-                    <div 
-                      className="w-6 h-6 rounded border border-gray-600 cursor-pointer"
-                      style={{ backgroundColor: '#232323' }} 
-                      onClick={() => {
-                        const newPages = [...pages];
-                        newPages[currentPage].backgroundColor = '#232323';
-                        setPages(newPages);
-                      }}
-                      title="Dark gray (default)"
-                    ></div>
-                    <div 
-                      className="w-6 h-6 rounded border border-gray-600 cursor-pointer"
-                      style={{ backgroundColor: '#121212' }} 
-                      onClick={() => {
-                        const newPages = [...pages];
-                        newPages[currentPage].backgroundColor = '#121212';
-                        setPages(newPages);
-                      }}
-                      title="Black"
-                    ></div>
-                    <div 
-                      className="w-6 h-6 rounded border border-gray-600 cursor-pointer"
-                      style={{ backgroundColor: '#1a1a2e' }} 
-                      onClick={() => {
-                        const newPages = [...pages];
-                        newPages[currentPage].backgroundColor = '#1a1a2e';
-                        setPages(newPages);
-                      }}
-                      title="Dark blue"
-                    ></div>
-                    <div 
-                      className="w-6 h-6 rounded border border-gray-600 cursor-pointer"
-                      style={{ backgroundColor: '#f5f5dc' }} 
-                      onClick={() => {
-                        const newPages = [...pages];
-                        newPages[currentPage].backgroundColor = '#f5f5dc';
-                        setPages(newPages);
-                      }}
-                      title="Beige (traditional manga)"
-                    ></div>
-                    <input 
-                      type="color" 
-                      value={pages[currentPage].backgroundColor || '#232323'}
-                      onChange={(e) => {
-                        const newPages = [...pages];
-                        newPages[currentPage].backgroundColor = e.target.value;
-                        setPages(newPages);
-                      }}
-                      className="w-6 h-6 rounded border border-gray-600 cursor-pointer"
-                      title="Custom color"
-                    />
-                  </div>
-                </div>
-          </div>
-          
-              {/* Manga Page Container */}
-              <div 
-                className="p-6 rounded-lg manga-page-container relative z-10 overflow-hidden border-[12px] border-double border-gray-800 shadow-[0_0_15px_rgba(0,0,0,0.5),inset_0_0_10px_rgba(0,0,0,0.3)]" 
-                style={{ 
-                  backgroundColor: pages[currentPage].backgroundColor || '#232323' // Dark gray background instead of white
-                }}
-              >
-            <div className="absolute top-0 left-0 w-full h-full pointer-events-none bg-manga-grid bg-[size:30px_30px] opacity-10"></div>
-            
-            {/* Manga Page Grid */}
-            <div 
-              className="grid h-[70vh] relative manga-grid" 
-              style={{
-                gridTemplateRows: `repeat(${pages[currentPage].layout.rows}, minmax(0, 1fr))`,
-                gap: pages[currentPage].gutterSize === 'small' ? '6px' : 
-                     pages[currentPage].gutterSize === 'large' ? '18px' : '10px',
-                padding: pages[currentPage].gutterSize === 'small' ? '6px' : 
-                          pages[currentPage].gutterSize === 'large' ? '18px' : '10px',
-              }}
-            >
-                  {pages[currentPage].panels.map((row, rowIndex) => 
-                rowIndex < pages[currentPage].layout.rows && (
-                  <div 
-                    key={rowIndex} 
-                    className="grid h-full"
-                    style={{
-                      gridTemplateColumns: `repeat(${pages[currentPage].layout.cols}, minmax(0, 1fr))`,
-                      gap: pages[currentPage].gutterSize === 'small' ? '6px' : 
-                           pages[currentPage].gutterSize === 'large' ? '18px' : '10px',
-                    }}
-                  >
-                        {row.map((panel, colIndex) => 
-                      colIndex < pages[currentPage].layout.cols && (
-                        <div 
-                          key={panel.id}
-                          onClick={() => handlePanelClick(rowIndex, colIndex)}
-                          className={`manga-panel panel-zoom border-[3px] border-ink-black relative overflow-hidden cursor-pointer
-                            hover:border-anime-indigo transition-all duration-200 
-                            ${Math.random() > 0.7 ? 'rotate-[0.4deg]' : Math.random() > 0.5 ? 'rotate-[-0.4deg]' : ''}`}
-                          style={{
-                                // Handle dynamic panel spanning
-                                gridColumn: panel.colSpan > 1 ? `span ${panel.colSpan}` : 'auto',
-                                gridRow: panel.rowSpan > 1 ? `span ${panel.rowSpan}` : 'auto',
-                            '--rotation': `${(Math.random() * 0.8 - 0.4).toFixed(2)}deg`,
-                                // Apply clip path based on panel shape
-                                clipPath: panel.shape?.type === 'rectangular' ? 'none' :
-                                         panel.shape?.type === 'diagonal' ? `polygon(0 0, 100% 0, 100% 100%, 0 100%, ${50 + panel.shape.angle}% ${50 - panel.shape.angle}%)` :
-                                         panel.shape?.type === 'polygonal' ? 'polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%)' :
-                                         panel.shape?.type === 'irregular' && panel.shape?.clipPath ? panel.shape.clipPath :
-                                         'none',
-                                backgroundColor: '#ffffff', // Keep panel background white for contrast
-                          }}
-                        >
-                          {panel.image ? (
-                            <div className="w-full h-full relative">
-                              <img 
-                                src={panel.image} 
-                                alt={`Panel ${rowIndex}-${colIndex}`}
-                                className="w-full h-full object-cover"
-                              />
-                              <div className="absolute inset-0 pointer-events-none manga-panel-overlay"></div>
-                              {Math.random() > 0.7 && (
-                                <div className="absolute inset-0 pointer-events-none bg-speed-lines opacity-20"></div>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="absolute inset-0 flex items-center justify-center">
-                              <div className="text-center space-y-2">
-                                <svg className="w-12 h-12 text-gray-400 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                                </svg>
-                                <p className="text-gray-500 text-sm font-comic">Click to Edit</p>
-                              </div>
-                            </div>
-                          )}
-                          
-                          {/* Display Text Bubbles if any */}
-                          {panel.textBoxes && panel.textBoxes.map(textBox => (
-                            <div 
-                              key={textBox.id}
-                              className={`absolute ${textBox.type}-bubble z-20`}
-                              style={{
-                                top: `${textBox.position.y}%`,
-                                left: `${textBox.position.x}%`,
-                                maxWidth: '80%',
-                                transform: 'translate(-50%, -50%)',
-                                backgroundColor: '#fff',
-                                padding: '8px 12px',
-                                borderRadius: textBox.type === 'thought' ? '50%' : '8px',
-                                border: textBox.type === 'narration' ? '2px solid #000' : 
-                                        textBox.type === 'speech' ? '2px solid #000' : 'none',
-                                boxShadow: '2px 2px 0 rgba(0,0,0,0.2)',
-                              }}
-                            >
-                              <p className="font-comic" style={{
-                                fontWeight: textBox.style.bold ? 'bold' : 'normal',
-                                fontStyle: textBox.style.italic ? 'italic' : 'normal',
-                                fontSize: `${textBox.style.fontSize}px`,
-                                color: '#000',
-                                margin: 0,
-                                lineHeight: 1.2,
-                              }}>
-                                {textBox.text}
-                              </p>
-                            </div>
-                          ))}
-                          
-                          {/* Sound effects - randomly generated for demo purposes */}
-                          {panel.image && Math.random() > 0.85 && (
-                            <div className="absolute top-1/3 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-20">
-                              <p className={`font-manga text-4xl ${Math.random() > 0.5 ? 'sound-boom' : Math.random() > 0.5 ? 'sound-slash' : 'sound-pow'}`}>
-                                {Math.random() > 0.7 ? 'BOOM!' : Math.random() > 0.5 ? 'SLASH!' : 'POW!'}
-                              </p>
-                            </div>
-                          )}
-                          
-                          {/* Display thumbnail of characters if any */}
-                          {panel.characters && panel.characters.length > 0 && (
-                            <div className="absolute bottom-2 right-2 flex -space-x-2 z-20">
-                              {panel.characters.slice(0, 3).map((char, i) => (
-                                <div key={i} className="w-8 h-8 rounded-full border-2 border-white bg-gray-800 overflow-hidden shadow-md">
-                                  <img 
-                                    src={char.thumbnail} 
-                                    alt={char.name}
-                                    className="w-full h-full object-cover"
-                                  />
-                                </div>
-                              ))}
-                              {panel.characters.length > 3 && (
-                                <div className="w-8 h-8 rounded-full bg-anime-pink flex items-center justify-center text-white text-xs font-bold border-2 border-white shadow-md">
-                                  +{panel.characters.length - 3}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )
-                        )}
-                  </div>
-                )
-                  )}
-                </div>
-            </div>
-          </div>
-          
-            {/* Sidebar with controls - Takes 1/3 of the space */}
-            <div className="space-y-4">
-              {/* Page Navigation Section */}
-              <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 shadow-lg">
-                <h3 className="text-lg font-semibold text-white mb-3">Page Navigation</h3>
-                <div className="flex items-center justify-between mb-4">
-                  <button 
-                    onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
-                    disabled={currentPage === 0}
-                    className={`px-3 py-1.5 rounded-md ${currentPage === 0 ? 'bg-gray-700 text-gray-500 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}
-                  >
-                    Previous
-              </button>
-                  <span className="text-white">Page {currentPage + 1} of {pages.length}</span>
-                  <button 
-                    onClick={() => setCurrentPage(Math.min(pages.length - 1, currentPage + 1))}
-                    disabled={currentPage === pages.length - 1}
-                    className={`px-3 py-1.5 rounded-md ${currentPage === pages.length - 1 ? 'bg-gray-700 text-gray-500 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}
-                  >
-                    Next
-              </button>
-                </div>
-                <button 
-                  onClick={addNewPage}
-                  className="w-full px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors duration-300"
-                >
-                  Add New Page
-              </button>
-            </div>
-              
-              {/* Layout Controls Section */}
-              <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 shadow-lg">
-                <h3 className="text-lg font-semibold text-white mb-3">Layout Controls</h3>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-gray-700 p-3 rounded-lg">
-                    <label className="block text-gray-300 text-sm mb-2">Vertical Panels</label>
-                    <select 
-                      value={pages[currentPage].layout.rows}
-                      onChange={(e) => adjustLayout(parseInt(e.target.value), pages[currentPage].layout.cols)}
-                      className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white"
-                    >
-                      {[1, 2, 3, 4, 5].map(num => (
-                        <option key={num} value={num}>{num}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="bg-gray-700 p-3 rounded-lg">
-                    <label className="block text-gray-300 text-sm mb-2">Horizontal Panels</label>
-                    <select 
-                      value={pages[currentPage].layout.cols}
-                      onChange={(e) => adjustLayout(pages[currentPage].layout.rows, parseInt(e.target.value))}
-                      className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white"
-                    >
-                      {[1, 2, 3, 4].map(num => (
-                        <option key={num} value={num}>{num}</option>
-                      ))}
-                    </select>
-          </div>
-        </div>
-      </div>
-              
-              {/* Story Information Section */}
-              <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 shadow-lg">
-                <h3 className="text-lg font-semibold text-white mb-3">Story Information</h3>
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-gray-300 text-sm mb-1">Title</label>
-                    <input 
-                      type="text" 
-                      value={storyTitle}
-                      onChange={(e) => setStoryTitle(e.target.value)}
-                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white"
-                      placeholder="Enter story title"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-gray-300 text-sm mb-1">Author</label>
-                    <input 
-                      type="text" 
-                      value={author}
-                      onChange={(e) => setAuthor(e.target.value)}
-                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white"
-                      placeholder="Your name"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-gray-300 text-sm mb-1">Description</label>
-                    <textarea 
-                      value={description}
-                      onChange={(e) => setDescription(e.target.value)}
-                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white h-20"
-                      placeholder="Brief description of your story"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+            storyTitle={storyTitle}
+            setStoryTitle={setStoryTitle}
+            author={author}
+            setAuthor={setAuthor}
+            description={description}
+            setDescription={setDescription}
+            onBackToProjects={goBackToProjects}
+            onShowPublishModal={() => setShowPublishModal(true)}
+          />
         </div>
       )}
       
@@ -2142,6 +2035,8 @@ const MangaCreatorPageComponent = () => {
           panel={selectedPanel} 
           onUpdate={updatePanel} 
           onClose={handlePanelEditorClose} 
+          styleType={styleType}
+          projectId={storyTitle ? storyTitle.replace(/\s+/g, '-').toLowerCase() : 'current-project'}
         />
       )}
       

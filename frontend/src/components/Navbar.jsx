@@ -1,10 +1,10 @@
-import React, { useState, useRef, useEffect, useContext } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { AuthContext } from '../App';
+import { useAuth } from '../context/AuthContext';
 import { logOut } from '../firebase/auth';
 
 const Navbar = () => {
-  const { isLoggedIn, setIsLoggedIn, currentUser, setCurrentUser } = useContext(AuthContext);
+  const { currentUser, isAuthenticated } = useAuth();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
@@ -12,6 +12,9 @@ const Navbar = () => {
   const userMenuRef = useRef(null);
   const navigate = useNavigate();
   const location = useLocation();
+  
+  // For backward compatibility with existing code
+  const isLoggedIn = isAuthenticated;
 
   // Close the create menu when clicking outside
   useEffect(() => {
@@ -34,8 +37,6 @@ const Navbar = () => {
   const handleLogout = async () => {
     try {
       await logOut();
-      setIsLoggedIn(false);
-      setCurrentUser(null);
       setIsUserMenuOpen(false);
       navigate('/');
     } catch (error) {
