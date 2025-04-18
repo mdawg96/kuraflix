@@ -533,8 +533,161 @@ export const mangaFirestore = {
   }
 };
 
+// Anime API functions
+export const animeFirestore = {
+  // Get all anime projects for the current user
+  getAnimeProjects: async () => {
+    try {
+      const userId = getCurrentUserId();
+      const projectsRef = collection(db, 'animeProjects');
+      const q = query(projectsRef, where("userId", "==", userId));
+      
+      const querySnapshot = await getDocs(q);
+      const projects = [];
+      
+      querySnapshot.forEach(doc => {
+        projects.push({
+          id: doc.id,
+          ...doc.data()
+        });
+      });
+      
+      return { data: { success: true, projects } };
+    } catch (error) {
+      console.error('Error fetching anime projects:', error);
+      return { data: { success: false, message: error.message } };
+    }
+  },
+  
+  // Get a specific anime project
+  getAnimeProject: async (projectId) => {
+    try {
+      const userId = getCurrentUserId();
+      const projectRef = doc(db, 'animeProjects', projectId);
+      
+      const projectDoc = await getDoc(projectRef);
+      if (!projectDoc.exists()) {
+        return { data: { success: false, message: 'Project not found' } };
+      }
+      
+      const projectData = projectDoc.data();
+      if (projectData.userId !== userId) {
+        return { data: { success: false, message: 'You don\'t have permission to access this project' } };
+      }
+      
+      return { 
+        data: { 
+          success: true, 
+          project: {
+            id: projectId,
+            ...projectData
+          }
+        }
+      };
+    } catch (error) {
+      console.error(`Error fetching anime project ${projectId}:`, error);
+      return { data: { success: false, message: error.message } };
+    }
+  },
+  
+  // Save a new anime project
+  saveAnimeProject: async (projectData) => {
+    try {
+      const userId = getCurrentUserId();
+      
+      // Add timestamp and user ID
+      const data = {
+        ...projectData,
+        userId,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      };
+      
+      const docRef = await addDoc(collection(db, 'animeProjects'), data);
+      
+      return { 
+        data: { 
+          success: true, 
+          project: {
+            id: docRef.id,
+            ...data
+          }
+        }
+      };
+    } catch (error) {
+      console.error('Error saving anime project:', error);
+      return { data: { success: false, message: error.message } };
+    }
+  },
+  
+  // Update an existing anime project
+  updateAnimeProject: async (projectId, projectData) => {
+    try {
+      const userId = getCurrentUserId();
+      const projectRef = doc(db, 'animeProjects', projectId);
+      
+      // Verify ownership
+      const projectDoc = await getDoc(projectRef);
+      if (!projectDoc.exists()) {
+        return { data: { success: false, message: 'Project not found' } };
+      }
+      
+      if (projectDoc.data().userId !== userId) {
+        return { data: { success: false, message: 'You don\'t have permission to update this project' } };
+      }
+      
+      // Update the project
+      await updateDoc(projectRef, {
+        ...projectData,
+        updatedAt: serverTimestamp()
+      });
+      
+      return { 
+        data: { 
+          success: true, 
+          project: {
+            id: projectId,
+            ...projectData,
+            userId
+          }
+        }
+      };
+    } catch (error) {
+      console.error(`Error updating anime project ${projectId}:`, error);
+      return { data: { success: false, message: error.message } };
+    }
+  },
+  
+  // Delete an anime project
+  deleteAnimeProject: async (projectId) => {
+    try {
+      const userId = getCurrentUserId();
+      const projectRef = doc(db, 'animeProjects', projectId);
+      
+      // Verify ownership
+      const projectDoc = await getDoc(projectRef);
+      if (!projectDoc.exists()) {
+        return { data: { success: false, message: 'Project not found' } };
+      }
+      
+      if (projectDoc.data().userId !== userId) {
+        return { data: { success: false, message: 'You don\'t have permission to delete this project' } };
+      }
+      
+      // Delete the project
+      await deleteDoc(projectRef);
+      
+      return { data: { success: true } };
+    } catch (error) {
+      console.error(`Error deleting anime project ${projectId}:`, error);
+      return { data: { success: false, message: error.message } };
+    }
+  }
+};
+
 export default {
   character: characterFirestore,
   manga: mangaFirestore,
+  anime: animeFirestore,
   uploadImage
 }; 

@@ -1,0 +1,95 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to check if user is authenticated
+    function isAuth() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user is accessing their own data
+    function isOwner(userId) {
+      return isAuth() && request.auth.uid == userId;
+    }
+
+    // Character collections - essential for your application
+    match /characters/{characterId} {
+      allow read: if isAuth() && resource.data.userId == request.auth.uid;
+      allow create: if isAuth() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuth() && resource.data.userId == request.auth.uid;
+    }
+    
+    match /projectCharacters/{joinId} {
+      allow read: if isAuth() && resource.data.userId == request.auth.uid;
+      allow create: if isAuth() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuth() && resource.data.userId == request.auth.uid;
+    }
+    
+    match /mangaStories/{storyId} {
+      allow read: if isAuth() && resource.data.userId == request.auth.uid;
+      allow create: if isAuth() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuth() && resource.data.userId == request.auth.uid;
+    }
+    
+    // Add rules for animeProjects collection
+    match /animeProjects/{projectId} {
+      allow read: if isAuth() && resource.data.userId == request.auth.uid;
+      allow create: if isAuth() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuth() && resource.data.userId == request.auth.uid;
+    }
+    
+    // Test collection - for debugging purposes
+    match /test_collection/{docId} {
+      allow read, write: if true;
+    }
+
+    // User related collections
+    match /userStats/{userId} {
+      allow read: if isAuth();  // Anyone logged in can read stats (for leaderboard)
+      allow write: if isOwner(userId);  // Only owner can write their stats
+    }
+
+    match /users/{userId} {
+      allow read: if isAuth();
+      allow write: if isOwner(userId);
+    }
+
+    // Queue and match related collections
+    match /queue/{queueId} {
+      allow read: if isAuth();
+      allow create: if isAuth() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAuth() && (
+        resource.data.userId == request.auth.uid ||  // User can delete their own entry
+        request.auth.uid in get(/databases/$(database)/documents/matches/$(resource.data.matchId)).data.participants // Or if they're in the match
+      );
+    }
+
+    match /matches/{matchId} {
+      allow read: if isAuth();
+      allow create: if isAuth();
+      allow update: if isAuth() && (
+        request.auth.uid == resource.data.initiator ||
+        request.auth.uid == resource.data.receiver
+      );
+    }
+
+    // WebRTC related collections
+    match /offerCandidates/{docId} {
+      allow read, write: if isAuth();
+    }
+
+    match /answerCandidates/{docId} {
+      allow read, write: if isAuth();
+    }
+    
+    // Public data collection
+    match /publicData/{document=**} {
+      allow read: if true;
+    }
+    
+    // Test collection - for debugging
+    match /test_collection/{docId} {
+      allow read, write: if true;  // Public access for testing
+    }
+  }
+} 

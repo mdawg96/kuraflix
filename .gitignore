@@ -18,7 +18,7 @@ build/
 
 # Backend
 backend/uploads/
-backend/outputs/
+backend/public/outputs/
 backend/logs/
 
 # IDEs and editors

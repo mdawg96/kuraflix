@@ -12,6 +12,9 @@ const Redis = require('ioredis');
 const Queue = require('bull');
 const FastRunPodComfyUIClient = require('./test/fast-runpod-client');
 const { OpenAI } = require('openai');
+const Runway = require('@runwayml/sdk');
+const { v2: cloudinary } = require('cloudinary');
+const mp3Duration = require('mp3-duration');
 
 // Load environment variables
 dotenv.config();
@@ -265,11 +268,11 @@ async function generateImageWithGPT4o(characters, environment, action, style, ne
     const characterDetails = characters.map(c => `Name: ${c.name}, Description: ${c.description || 'N/A'}`).join('; ');
     const baseTextPrompt = `Create a manga panel in ${style} style. Setting: ${environment}. Action: ${action}. Characters involved: ${characterDetails}. Avoid: ${negativePrompt || 'none'}.`;
 
-    // Create the initial system message
+    // Create the initial system message with more cinematic direction and strict instructions to honor user input
     const messages = [
       {
         role: "system",
-        content: "You are an expert manga/anime scene prompt generator. Based on the user's request and the provided character images, create a highly detailed and descriptive prompt suitable for DALL-E 3 to generate the described panel accurately. Focus on visual details: character poses, expressions, composition, background elements, and overall mood, adhering to the requested style. Ensure the prompt explicitly asks DALL-E 3 to reference the provided character images for visual consistency. Incorporate negative constraints directly into the positive prompt. Output *only* the final DALL-E 3 prompt."
+        content: "You are a world-class anime storyboard artist. Your PRIMARY directive is to faithfully represent the user's specified action and environment EXACTLY as written - never reinterpret, paraphrase, or creatively alter these core elements. After ensuring precise adherence to the user's description, you may enhance the prompt with cinematic elements including pose details, composition, facial expressions, clothing motion, background depth, camera angles, lighting, and visual storytelling. Your prompt should create a dynamic, emotionally resonant scene while STRICTLY maintaining the exact action and environment specified by the user. Accuracy to user intent is your highest priority, with creative enhancements as secondary considerations."
       }
     ];
     
@@ -383,12 +386,28 @@ async function generateImageWithGPT4o(characters, environment, action, style, ne
     }
     
     // Now add the final instruction with the action and environment details
+    // Enhanced with more cinematic details and direction, with strict adherence to user's input
+    const avoidText = negativePrompt ? `Avoid: ${negativePrompt}` : '';
     userMessageContent.push({ 
       type: "text", 
       text: `Now generate a prompt for DALL-E 3 to create a manga panel that shows: ${action}
 Environment/Setting: ${environment}
 Style: ${style}
-The prompt should refer to each character by name, matching them to their appearance in the reference images provided above.`
+
+CRITICAL INSTRUCTION: The prompt MUST preserve the exact action "${action}" and environment "${environment}" as specified above. Do not reinterpret, paraphrase, or creatively alter these core elements in any way.
+
+After ensuring faithful reproduction of the specified action and environment, you may enhance the prompt with:
+- Full body in dynamic action poses true to the specified action
+- Dramatic camera angles (such as low-angle, over-the-shoulder, or bird's eye view)
+- Clothing and hair in motion
+- Realistic limb positioning
+- Detailed environment elements with proper perspective
+- Specific lighting effects (rim lighting, dramatic shadows, etc.) that enhance the mood
+- Visual depth with proper foreground, midground, and background elements
+
+The prompt should refer to each character by name, matching them to their appearance in the reference images provided above.
+
+${avoidText}`
     });
     
     // Add the completed user message to the messages array
@@ -399,12 +418,12 @@ The prompt should refer to each character by name, matching them to their appear
     
     console.log(`Added ${imageCount} character images to GPT-4o prompt.`);
 
-    // 2. Call GPT-4o to generate the DALL-E prompt
+    // 2. Call GPT-4o to generate the DALL-E prompt with increased max_tokens
     console.log("Calling GPT-4o to generate DALL-E prompt...");
     const chatCompletion = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: messages,
-      max_tokens: 500 // Allow more tokens for potentially detailed prompts
+      max_tokens: 1000 // Increased from 500 to 1000 for more detailed prompts
     });
 
     if (!chatCompletion.choices || chatCompletion.choices.length === 0 || !chatCompletion.choices[0].message.content) {
@@ -419,9 +438,9 @@ The prompt should refer to each character by name, matching them to their appear
       model: "dall-e-3",
       prompt: dallePrompt,
       n: 1,
-      size: "1024x1024",
-      quality: "standard",
-      style: style === 'manga' ? 'natural' : 'vivid',
+      size: "1024x1792", // Changed from 1024x1024 to 9:16 aspect ratio
+      quality: "hd",
+      style: "vivid",
     });
 
     console.log('DALL-E 3 response received.');
@@ -479,7 +498,7 @@ async function generateSingleCharacterWithGPT4o(character, environment, action, 
     const messages = [
       {
         role: "system",
-        content: "You are an expert character designer. You will create a detailed prompt for DALL-E 3 to generate a SINGLE CHARACTER portrait based on the user's description. Focus on creating a full-body portrait of ONLY ONE CHARACTER with clear details of their appearance. Do NOT introduce additional characters. Output ONLY the final DALL-E 3 prompt."
+        content: "You are a masterful character designer and illustrator. Your PRIMARY directive is to faithfully represent the user's specified character, action, and environment EXACTLY as written - never reinterpret, paraphrase, or creatively alter these core elements. After ensuring precise adherence to the character's description and specified action, you may enhance the prompt with cinematic details like pose dynamics, facial expressions, clothing details, lighting, and composition. Create a full-body portrait that strictly maintains the character's identity and specified action while adding visual depth and professional quality. Accuracy to user intent is your highest priority, with creative enhancements as secondary considerations."
       }
     ];
     
@@ -555,22 +574,35 @@ async function generateSingleCharacterWithGPT4o(character, environment, action, 
       }
     }
     
-    // Add character details
+    // Add character details with enhanced instructions for more dynamic and cinematic presentation
+    // while ensuring strict adherence to the character description and action
+    const avoidText = negativePrompt ? `Avoid these issues: ${negativePrompt}` : '';
     userMessageContent.push({ 
       type: "text", 
       text: `Character details:
 Name: ${character.name || 'Unnamed Character'}
 Description: ${character.description || 'No description provided'}
+Action: ${action || 'standing in a dynamic pose'}
+Environment: ${environment || 'contextually appropriate background'}
+Style: ${style || 'high-quality anime'}
 
-Please create a prompt for DALL-E 3 to generate a FULL BODY PORTRAIT of this SINGLE CHARACTER with the following specs:
-- Character should be: ${action || 'standing in a neutral pose'}
-- Environment: ${environment || 'simple studio background'}
-- Style: ${style || 'anime'}
-- Show the ENTIRE body from head to feet
-- Character should be centered in the frame
-- IMPORTANT: Generate ONLY ONE CHARACTER - do not add any other people or characters to the scene
+CRITICAL INSTRUCTION: The prompt MUST preserve the exact character description and action "${action}" as specified above. Do not reinterpret, paraphrase, or creatively alter these core elements in any way.
+
+Please create a prompt for DALL-E 3 to generate a FULL BODY PORTRAIT of this SINGLE CHARACTER that maintains strict fidelity to the character description and specified action, with these additional enhancements:
+
+- Show the ENTIRE body from head to feet with realistic proportions and anatomy
+- Ensure the character's pose accurately represents the specified action without creative reinterpretation
+- Include dramatic lighting that creates depth and highlights key character features
+- Add environmental elements that interact with the character (wind effects, reflections, shadows)
+- Use a cinematic camera angle that best showcases the character's presence
+- Pay special attention to clothing details including fabric texture, folds, and how it responds to the pose
+- Hair should have volume, individual strands, and natural movement
+- Face should have detailed features with expressive eyes that convey emotion
+- IMPORTANT: Generate ONLY ONE CHARACTER - do not add any other people
 - DO NOT create a manga panel with multiple characters
-- Focus solely on creating this single character as described`
+- Focus solely on creating this single character as described
+
+${avoidText}`
     });
     
     // Add the completed user message to the messages array
@@ -579,12 +611,12 @@ Please create a prompt for DALL-E 3 to generate a FULL BODY PORTRAIT of this SIN
       content: userMessageContent
     });
 
-    // Call GPT-4o to generate the DALL-E prompt
+    // Call GPT-4o to generate the DALL-E prompt with increased max_tokens
     console.log("Calling GPT-4o to generate character prompt...");
     const chatCompletion = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: messages,
-      max_tokens: 500
+      max_tokens: 1000 // Increased from 500 to 1000 for more detailed prompts
     });
 
     if (!chatCompletion.choices || chatCompletion.choices.length === 0 || !chatCompletion.choices[0].message.content) {
@@ -599,9 +631,9 @@ Please create a prompt for DALL-E 3 to generate a FULL BODY PORTRAIT of this SIN
       model: "dall-e-3",
       prompt: dallePrompt,
       n: 1,
-      size: "1024x1024",
-      quality: "standard",
-      style: style === 'manga' ? 'natural' : 'vivid',
+      size: "1024x1792", // Changed from 1024x1024 to 9:16 aspect ratio
+      quality: "hd",
+      style: "vivid",
     });
 
     if (!imageResponse.data || imageResponse.data.length === 0) {
@@ -655,10 +687,19 @@ setupRedisServices().then(redisAvailable => {
 const app = express();
 const PORT = process.env.PORT || 5001;
 
+// Configure CORS properly
+const corsOptions = {
+  origin: '*', // In production, restrict to your frontend domain
+  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+  credentials: true,
+  exposedHeaders: ['Content-Length', 'Content-Type']
+};
+
+app.use(cors(corsOptions));
+
 // Middleware
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Configure Storage for uploads
 const storage = multer.diskStorage({
@@ -677,7 +718,13 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 // Serve static files
-app.use('/outputs', express.static(path.join(__dirname, 'public', 'outputs')));
+app.use('/outputs', express.static(path.join(__dirname, 'outputs'), {
+  setHeaders: (res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.set('Content-Type', 'video/mp4'); // Set proper content type for videos
+  }
+}));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Create directory for outputs
@@ -1208,7 +1255,7 @@ app.post('/api/generate-scene', (req, res) => {
       success: true,
       scene: {
         id: Date.now().toString(),
-        videoUrl: 'https://via.placeholder.com/640x360.png?text=AI+Generated+Scene',
+        videoUrl: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NDAiIGhlaWdodD0iMzYwIiB2aWV3Qm94PSIwIDAgNjQwIDM2MCI+PHJlY3Qgd2lkdGg9IjY0MCIgaGVpZ2h0PSIzNjAiIGZpbGw9IiMzMzMiLz48dGV4dCB4PSIzMjAiIHk9IjE4MCIgZm9udC1mYW1pbHk9IkFyaWFsIiBmb250LXNpemU9IjI0IiBmaWxsPSIjZmZmIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBhbGlnbm1lbnQtYmFzZWxpbmU9Im1pZGRsZSI+QUkgR2VuZXJhdGVkIFNjZW5lPC90ZXh0Pjwvc3ZnPg==',
         description,
         duration: '0:30'
       }
@@ -1525,7 +1572,564 @@ app.get('/api/test-gpt4o', async (req, res) => {
   }
 });
 
-// Start server and capture the server instance
+// Image generation endpoint
+app.post('/api/generate-image', async (req, res) => {
+  try {
+    console.log('Received image generation request:', req.body);
+    
+    const { prompt, model = 'dall-e-3', size = '1024x1024' } = req.body;
+    
+    if (!prompt) {
+      return res.status(400).json({ success: false, message: 'Prompt is required' });
+    }
+    
+    // Check if OpenAI client is initialized
+    if (!openai) {
+      return res.status(500).json({ 
+        success: false, 
+        message: 'OpenAI API key not configured. Please add OPENAI_API_KEY to your environment variables.' 
+      });
+    }
+    
+    // Create a unique filename based on timestamp
+    const timestamp = Date.now();
+    const outputDir = path.join(__dirname, 'public', 'outputs');
+    const imageFilename = `generated_image_${timestamp}.png`;
+    const imagePath = path.join(outputDir, imageFilename);
+    const publicPath = `outputs/${imageFilename}`;
+    
+    // Ensure output directory exists
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+    
+    // Call OpenAI API
+    const openaiResponse = await openai.images.generate({
+      model: model,
+      prompt: prompt,
+      n: 1,
+      size: size === "1024x1024" ? "1024x1792" : size, // Use 9:16 ratio if default size was selected
+      response_format: 'b64_json'
+    });
+    
+    if (!openaiResponse.data || openaiResponse.data.length === 0) {
+      throw new Error('No image generated by OpenAI');
+    }
+    
+    // Get the base64 image data
+    const imageData = openaiResponse.data[0].b64_json;
+    
+    // Write the image to file
+    const imageBuffer = Buffer.from(imageData, 'base64');
+    fs.writeFileSync(imagePath, imageBuffer);
+    
+    // Return success response with the file path
+    res.json({
+      success: true,
+      message: 'Image generated successfully',
+      imagePath: publicPath
+    });
+    
+  } catch (error) {
+    console.error('Error generating image:', error);
+    
+    // Send error response
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to generate image',
+      error: error.toString()
+    });
+  }
+});
+
+// Animation generation endpoint using Runway SDK
+app.post('/api/generate-animation', async (req, res) => {
+  try {
+    const { image, prompt, duration, style } = req.body;
+    
+    if (!image || !prompt) {
+      return res.status(400).json({
+        success: false,
+        message: 'Image and prompt are required'
+      });
+    }
+
+    // Initialize Runway client with API key
+    const RUNWAY_API_KEY = process.env.RUNWAY_API_KEY;
+    if (!RUNWAY_API_KEY) {
+      console.error('Runway API key not found in environment variables');
+      return res.status(500).json({
+        success: false,
+        message: 'Runway API key not configured'
+      });
+    }
+
+    console.log('Starting animation generation with Runway SDK...');
+
+    // Create a unique filename for the output
+    const outputFilename = `animation_${Date.now()}.mp4`;
+    const outputPath = path.join(outputsDir, outputFilename);
+
+    try {
+      // Initialize the Runway SDK client
+      const client = new Runway({ apiKey: RUNWAY_API_KEY });
+      console.log('Runway client keys:', Object.keys(client));
+      
+      // If imageToVideo exists, log its methods
+      if (client.imageToVideo) {
+        console.log('Runway imageToVideo methods:', Object.keys(client.imageToVideo));
+      }
+      
+      // Start image-to-video generation
+      console.log('Starting image-to-video generation...');
+      
+      // Process the image URL to ensure it's a valid HTTPS URL
+      let imageUrl = '';
+      
+      // If image is already an HTTPS URL, use it directly
+      if (image.startsWith('https://')) {
+        imageUrl = image;
+        console.log('Using provided HTTPS image URL:', imageUrl);
+      }
+      // If image is HTTP URL, we need to upload it to Cloudinary
+      else if (image.startsWith('http://')) {
+        // Instead of just changing http to https (which won't work), actually upload to Cloudinary
+        console.log('Local HTTP URL detected, uploading to Cloudinary...', image);
+        
+        try {
+          // Fetch the image first
+          const response = await fetch(image);
+          if (!response.ok) {
+            throw new Error(`Failed to fetch image from ${image}`);
+          }
+          
+          // Convert to array buffer and then to base64
+          const arrayBuffer = await response.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          
+          // Convert buffer to base64 data URL
+          const base64Image = `data:image/png;base64,${buffer.toString('base64')}`;
+          
+          // Upload to Cloudinary
+          imageUrl = await uploadToCloudinary(base64Image);
+          console.log('Uploaded local image to Cloudinary:', imageUrl);
+        } catch (fetchError) {
+          console.error('Error fetching and uploading local image:', fetchError);
+          throw new Error(`Failed to process local image: ${fetchError.message}`);
+        }
+      }
+      // For data URLs or local paths, upload to Cloudinary
+      else {
+        console.log('Uploading image to Cloudinary to get HTTPS URL...');
+        imageUrl = await uploadToCloudinary(image);
+        console.log('Image uploaded to Cloudinary:', imageUrl);
+      }
+      
+      try {
+        // Enhance the prompt with GPT-4o if available
+        let enhancedPrompt = prompt;
+        
+        if (openai) {
+          console.log("Using GPT-4o to enhance animation prompt...");
+          try {
+            const messages = [
+              {
+                role: "system",
+                content: "You are a professional animation director. Your task is to enhance animation prompts for Runway Gen-4. IMPORTANT: Your output MUST be less than 800 characters total. Be extremely concise. Your PRIMARY directive is to preserve the user's original content and scene description EXACTLY as provided while adding brief motion directives."
+              },
+              {
+                role: "user",
+                content: [
+                  { 
+                    type: "text", 
+                    text: `I'm using Runway Gen-4 to animate this image with the following base prompt: "${prompt}". 
+
+CRITICAL: Your enhanced prompt MUST be under 800 characters total. Be extremely concise.
+Add brief details about camera movements, dynamic elements, and motion while preserving the original description exactly.`
+                  }
+                ]
+              }
+            ];
+            
+            // Call GPT-4o to generate the enhanced prompt
+            const chatCompletion = await openai.chat.completions.create({
+              model: "gpt-4o",
+              messages: messages,
+              max_tokens: 400, // Limiting tokens to ensure shorter response
+              temperature: 0.7 // Slight creativity while remaining focused
+            });
+            
+            if (chatCompletion.choices && chatCompletion.choices.length > 0 && chatCompletion.choices[0].message.content) {
+              enhancedPrompt = chatCompletion.choices[0].message.content.trim();
+              
+              // Ensure the prompt is under Runway's limit
+              if (enhancedPrompt.length > 950) {
+                console.log(`Prompt too long (${enhancedPrompt.length} chars), truncating...`);
+                enhancedPrompt = enhancedPrompt.substring(0, 950);
+              }
+              
+              console.log(`Enhanced animation prompt generated (${enhancedPrompt.length} chars): ${enhancedPrompt.substring(0, 200)}...`);
+            } else {
+              console.log("Could not generate enhanced prompt, using original");
+            }
+          } catch (gptError) {
+            console.error("Error enhancing prompt with GPT-4o:", gptError);
+            console.log("Using original prompt instead");
+          }
+        }
+        
+        // Extra safety check - ensure prompt is under limit
+        if (enhancedPrompt.length > 950) {
+          console.log(`Final prompt still too long (${enhancedPrompt.length} chars), using truncated version`);
+          enhancedPrompt = enhancedPrompt.substring(0, 950);
+        }
+        
+        // Start the generation process
+        let videoUrl = null;
+        let generationId = null;
+        
+        // Check if imageToVideo method exists
+        if (client.imageToVideo && typeof client.imageToVideo.create === 'function') {
+          console.log('Using imageToVideo.create method to create animation');
+          // Generate video and get generation ID
+          const generation = await client.imageToVideo.create({
+            model: 'gen4_turbo',
+            promptImage: imageUrl, 
+            promptText: enhancedPrompt, // Use the enhanced prompt here
+            ratio: '720:1280', // Use the supported 9:16 portrait format (720:1280)
+            // Add duration parameter (in seconds) if provided by the client
+            duration: duration ? parseInt(duration) : 10 // Use provided duration or default to 10 seconds
+          });
+          console.log('Generation started:', generation);
+          
+          if (generation && generation.id) {
+            generationId = generation.id;
+            console.log('Generation ID:', generationId);
+            
+            // Wait for the generation to complete using the tasks API
+            let maxAttempts = 30; // 30 attempts with 10s delay = up to 5 minutes
+            let attempts = 0;
+            
+            // Poll for task completion using tasks.retrieve
+            do {
+              // Wait 10 seconds between checks as video generation takes time
+              await new Promise(resolve => setTimeout(resolve, 10000));
+              attempts++;
+              
+              console.log(`Checking generation status (attempt ${attempts}/${maxAttempts})...`);
+              
+              try {
+                // Use tasks.retrieve as the primary method for checking status
+                if (!client.tasks || typeof client.tasks.retrieve !== 'function') {
+                  console.error('client.tasks.retrieve method not available!', Object.keys(client));
+                  throw new Error('Runway SDK missing tasks.retrieve method');
+                }
+                
+                const task = await client.tasks.retrieve(generationId);
+                console.log(`Task status: ${task.status}`);
+                
+                // Log the task structure for debugging
+                console.log('Task response structure:', JSON.stringify({
+                  status: task.status,
+                  hasOutput: !!task.output,
+                  outputType: task.output ? typeof task.output : 'none',
+                  isOutputArray: task.output ? Array.isArray(task.output) : false,
+                  hasUrl: !!task.url,
+                  keys: Object.keys(task)
+                }, null, 2));
+                
+                if (task.status === 'COMPLETED' || task.status === 'SUCCEEDED') {
+                  // Task is complete, extract video URL
+                  console.log('Task completed successfully!');
+                  
+                  // Extract video URL from task response - handle different response formats
+                  if (task.output) {
+                    // The output could be a string URL directly
+                    if (typeof task.output === 'string') {
+                      videoUrl = task.output;
+                    } 
+                    // Or it could be an object with a url property
+                    else if (task.output.url) {
+                      videoUrl = task.output.url;
+                    } 
+                    // Or it could be an array of URLs or objects
+                    else if (Array.isArray(task.output) && task.output.length > 0) {
+                      const firstOutput = task.output[0];
+                      videoUrl = typeof firstOutput === 'string' ? firstOutput : firstOutput.url;
+                    }
+                  } 
+                  // Some APIs place the URL directly on the task
+                  else if (task.url) {
+                    videoUrl = task.url;
+                  }
+                  
+                  if (videoUrl) {
+                    console.log('Video URL found:', videoUrl);
+                    break;
+                  } else {
+                    console.error('Task completed but no video URL found in response:', task);
+                  }
+                } else if (task.status === 'FAILED' || task.status === 'ERROR') {
+                  // Task failed
+                  const errorMessage = task.error || task.errorMessage || task.failureReason || 'Unknown error';
+                  throw new Error(`Generation failed: ${errorMessage}`);
+                } else {
+                  // Task still in progress
+                  console.log(`Task in progress with status: ${task.status}`);
+                }
+              } catch (statusError) {
+                console.error(`Error checking task status (attempt ${attempts}):`, statusError);
+                
+                if (attempts >= maxAttempts) {
+                  throw statusError;
+                }
+              }
+            } while (attempts < maxAttempts);
+            
+            if (!videoUrl) {
+              throw new Error(`Failed to get video URL after ${maxAttempts} attempts`);
+            }
+          } else {
+            throw new Error('No generation ID returned from Runway');
+          }
+        } else {
+          console.error('imageToVideo.create method not available, available methods:', Object.keys(client));
+          throw new Error('Runway client does not support video generation');
+        }
+        
+        // Download the generated animation
+        console.log('Downloading generated video from:', videoUrl);
+        const videoResponse = await fetch(videoUrl);
+        if (!videoResponse.ok) {
+          throw new Error('Failed to download animation from Runway');
+        }
+
+        // Use arrayBuffer() instead of buffer(), then convert to Buffer
+        const arrayBuffer = await videoResponse.arrayBuffer();
+        const animationBuffer = Buffer.from(arrayBuffer);
+
+        // Ensure the outputs directory exists
+        if (!fs.existsSync(outputsDir)) {
+          fs.mkdirSync(outputsDir, { recursive: true });
+        }
+
+        // Save the animation file
+        fs.writeFileSync(outputPath, animationBuffer);
+        console.log(`Animation saved to ${outputPath}`);
+
+        // Try to get video information using FFmpeg, if available
+        try {
+          const { exec } = require('child_process');
+          exec(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 ${outputPath}`, (error, stdout, stderr) => {
+            if (!error && stdout) {
+              const actualDuration = parseFloat(stdout.trim());
+              console.log(`Video duration from FFmpeg: ${actualDuration} seconds (requested: ${duration || 'default'} seconds)`);
+            }
+          });
+        } catch (e) {
+          console.log('FFmpeg not available to check video duration');
+        }
+
+        // Return success response with animation URL and enhanced prompt
+        return res.json({
+          success: true,
+          animationUrl: `/video/${outputFilename}`, // Use the new streaming endpoint
+          directUrl: `/outputs/${outputFilename}`, // Also include the direct URL as fallback
+          enhancedPrompt: enhancedPrompt // Return the enhanced prompt for reference
+        });
+      } catch (error) {
+        console.error('Error during video generation:', error);
+        
+        // Detailed error logging
+        if (error.response) {
+          console.error('Runway API response error details:', {
+            status: error.response.status,
+            data: JSON.stringify(error.response.data, null, 2),
+            headers: error.response.headers
+          });
+        } else if (error.request) {
+          console.error('Runway API request error - no response received');
+        }
+        
+        throw new Error(`Runway API error: ${error.message}`);
+      }
+    } catch (error) {
+      console.error('Runway SDK error:', error);
+      
+      // Add more detailed error logging
+      if (error.response) {
+        console.error('Runway API response error details:', {
+          status: error.response.status,
+          data: error.response.data,
+          headers: error.response.headers
+        });
+      }
+      
+      return res.status(500).json({
+        success: false,
+        message: `Error generating animation: ${error.message}`
+      });
+    }
+  } catch (error) {
+    console.error('Animation generation error:', error);
+    return res.status(500).json({
+      success: false,
+      message: `Error generating animation: ${error.message}`
+    });
+  }
+});
+
+// Upload image to ImgBB and get HTTPS URL
+app.post('/api/upload-image', async (req, res) => {
+  try {
+    const { image } = req.body;
+    
+    if (!image) {
+      return res.status(400).json({
+        success: false,
+        message: 'Image data is required'
+      });
+    }
+
+    // ImgBB API key - this is a free service with rate limits
+    // In production, you'd want to use a more robust solution like AWS S3
+    const IMGBB_API_KEY = process.env.IMGBB_API_KEY || '2677f6f2d1af6ac9b4489c8b021f4f25';
+    
+    console.log('Uploading image to ImgBB...');
+    
+    // Create form data for ImgBB API
+    const formData = new FormData();
+    
+    // Extract base64 data if it's a data URL
+    let imageData = image;
+    if (image.startsWith('data:')) {
+      // Remove the prefix (e.g., data:image/png;base64,)
+      imageData = image.split(',')[1];
+    }
+    
+    formData.append('key', IMGBB_API_KEY);
+    formData.append('image', imageData);
+    
+    // Upload to ImgBB
+    const response = await fetch('https://api.imgbb.com/1/upload', {
+      method: 'POST',
+      body: formData
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(`ImgBB API error: ${errorData.error || response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    if (!data.success) {
+      throw new Error('Failed to upload image to ImgBB');
+    }
+    
+    // Return the HTTPS URL of the uploaded image
+    return res.json({
+      success: true,
+      imageUrl: data.data.url,
+      displayUrl: data.data.display_url,
+      deleteUrl: data.data.delete_url
+    });
+  } catch (error) {
+    console.error('Image upload error:', error);
+    return res.status(500).json({
+      success: false,
+      message: `Error uploading image: ${error.message}`
+    });
+  }
+});
+
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'dczw7eaj7',
+  api_key: process.env.CLOUDINARY_API_KEY || '447117111331764',
+  api_secret: process.env.CLOUDINARY_API_SECRET || 'your_api_secret'
+});
+
+// Helper function to upload base64 image to Cloudinary
+async function uploadToCloudinary(data, resourceType = 'auto', format = null) {
+  try {
+    console.log(`Uploading ${resourceType} to Cloudinary...`);
+    
+    let uploadOptions = {
+      folder: 'narutio_temp',
+      resource_type: resourceType || 'auto',
+      quality: 'auto:best',
+      fetch_format: format || 'auto',
+      flags: 'attachment'
+    };
+    
+    // Apply transformations only for images
+    if (resourceType === 'image') {
+      // For Runway Gen-4 Turbo, we need to ensure the image has a valid aspect ratio
+      // Valid aspect ratios for Gen-4 Turbo are 1280:720, 720:1280, 1104:832, 832:1104, 960:960, 1584:672
+      uploadOptions.transformation = [
+        // Update dimensions to 1280x720 to match Runway Gen-4 Turbo requirements
+        { width: 1280, height: 720, crop: 'fill', gravity: 'center' }
+      ];
+    }
+    
+    // Audio-specific options for better quality
+    if (resourceType === 'auto' && format === 'mp3') {
+      uploadOptions.resource_type = 'raw'; // Use raw for better audio quality
+      uploadOptions.quality = 100; // Highest quality
+      uploadOptions.bit_rate = '128k'; // Higher bitrate for clearer audio
+    }
+    
+    // If format is specified, set it in the options
+    if (format) {
+      uploadOptions.format = format;
+    }
+    
+    // If data is a data URL, upload directly
+    if (typeof data === 'string' && data.startsWith('data:')) {
+      console.log(`Uploading data URL to Cloudinary as ${resourceType}`);
+      const result = await cloudinary.uploader.upload(data, uploadOptions);
+      console.log(`${resourceType.charAt(0).toUpperCase() + resourceType.slice(1)} uploaded to Cloudinary:`, result.secure_url);
+      return result;
+    } 
+    // If data is already a URL, use upload by URL
+    else if (typeof data === 'string' && data.startsWith('http')) {
+      console.log(`Uploading from URL to Cloudinary as ${resourceType}`);
+      const result = await cloudinary.uploader.upload(data, {
+        ...uploadOptions,
+        public_id: `narutio_${Date.now()}`
+      });
+      console.log(`${resourceType.charAt(0).toUpperCase() + resourceType.slice(1)} uploaded to Cloudinary:`, result.secure_url);
+      return result;
+    }
+    // If data is a Buffer (binary data)
+    else if (Buffer.isBuffer(data) || (typeof data === 'object' && data instanceof Uint8Array)) {
+      console.log(`Uploading binary data to Cloudinary as ${resourceType}`);
+      
+      // Convert buffer to base64 string for Cloudinary
+      const base64Data = Buffer.isBuffer(data) ? data.toString('base64') : Buffer.from(data).toString('base64');
+      const dataUrl = `data:audio/${format || 'mp3'};base64,${base64Data}`;
+      
+      const result = await cloudinary.uploader.upload(dataUrl, uploadOptions);
+      console.log(`${resourceType.charAt(0).toUpperCase() + resourceType.slice(1)} uploaded to Cloudinary:`, result.secure_url);
+      return result;
+    }
+    
+    throw new Error('Unsupported data format');
+  } catch (error) {
+    console.error('Cloudinary upload error:', error);
+    throw new Error(`Failed to upload to Cloudinary: ${error.message}`);
+  }
+}
+
+// Add this near the top of the file with the other configuration variables
+const USE_CLOUDINARY = process.env.CLOUDINARY_CLOUD_NAME && 
+                     process.env.CLOUDINARY_API_KEY && 
+                     process.env.CLOUDINARY_API_SECRET ? true : false;
+
+console.log(`Cloudinary integration: ${USE_CLOUDINARY ? 'ENABLED' : 'DISABLED'}`);
+
+// Start server directly on port 5001 - no retry mechanism
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}, bound to all interfaces`);
 });
@@ -1550,7 +2154,8 @@ const gracefulShutdown = async () => {
     // Close queues if they exist
     if (renderQueue) {
       console.log('Closing render queue...');
-      await renderQueue.close();
+      // renderQueue is an array, so it doesn't have a close() method
+      // Just log that it's been "closed" for consistency
       console.log('Render queue closed.');
     }
     
@@ -1565,3 +2170,414 @@ const gracefulShutdown = async () => {
 // Listen for termination signals
 process.on('SIGINT', gracefulShutdown);   // For Ctrl+C
 process.on('SIGTERM', gracefulShutdown);  // For kill command 
+
+// Add a dedicated endpoint for video streaming with range support
+app.get('/video/:filename', (req, res) => {
+  const filename = req.params.filename;
+  const videoPath = path.join(__dirname, 'public', 'outputs', filename);
+  
+  // Check if file exists
+  if (!fs.existsSync(videoPath)) {
+    return res.status(404).send('Video not found');
+  }
+  
+  // Get file stats
+  const stat = fs.statSync(videoPath);
+  const fileSize = stat.size;
+  const range = req.headers.range;
+  
+  // Handle range requests (essential for video seeking)
+  if (range) {
+    const parts = range.replace(/bytes=/, "").split("-");
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+    const chunkSize = (end - start) + 1;
+    const file = fs.createReadStream(videoPath, { start, end });
+    
+    // Set proper headers for range requests
+    res.writeHead(206, {
+      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': chunkSize,
+      'Content-Type': 'video/mp4',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+      'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept, Range',
+    });
+    
+    // Pipe the file stream to response
+    file.pipe(res);
+  } else {
+    // If no range is requested, send the entire file
+    res.writeHead(200, {
+      'Content-Length': fileSize,
+      'Content-Type': 'video/mp4',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+      'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept, Range',
+    });
+    
+    // Create read stream and pipe to response
+    const fileStream = fs.createReadStream(videoPath);
+    fileStream.pipe(res);
+  }
+});
+
+// Debug endpoint to check if videos are accessible
+app.get('/check-video/:filename', (req, res) => {
+  const filePath = path.join(__dirname, 'outputs', req.params.filename);
+  if (fs.existsSync(filePath)) {
+    res.json({ success: true, message: 'Video file exists', path: filePath });
+  } else {
+    res.status(404).json({ success: false, message: 'Video file not found', path: filePath });
+  }
+});
+
+// Endpoint to list available output files (especially videos)
+app.get('/outputs', (req, res) => {
+  const outputsDir = path.join(__dirname, 'outputs');
+  try {
+    if (!fs.existsSync(outputsDir)) {
+      // Create the directory if it doesn't exist
+      fs.mkdirSync(outputsDir, { recursive: true });
+      return res.json({ success: true, files: [] });
+    }
+    
+    const files = fs.readdirSync(outputsDir);
+    res.json({ success: true, files });
+  } catch (error) {
+    console.error('Error listing output files:', error);
+    res.status(500).json({ success: false, message: 'Error listing output files', error: error.message });
+  }
+});
+
+// Health check endpoint
+app.get('/api/health-check', (req, res) => {
+  res.json({ status: 'ok', message: 'Server is running' });
+});
+
+// Add OpenAI narration generation endpoints
+app.post('/api/generate-narration', async (req, res) => {
+  try {
+    const { text, voice, speed } = req.body;
+    
+    if (!text || !voice) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Text and voice are required' 
+      });
+    }
+    
+    // Check if OpenAI API key is set
+    if (!process.env.OPENAI_API_KEY) {
+      console.error("OpenAI API key is not set in environment variables");
+      return res.status(500).json({
+        success: false,
+        message: 'OpenAI API key is not configured on the server'
+      });
+    }
+    
+    console.log("Generating narration with params:", { text, voice, speed });
+    
+    // Generate a unique filename for the narration audio
+    const timestamp = Date.now();
+    const outputPath = `outputs/narration_${timestamp}.mp3`;
+    const fullOutputPath = path.join(__dirname, outputPath);
+    
+    // Create directories if they don't exist
+    await fs.promises.mkdir(path.dirname(fullOutputPath), { recursive: true });
+    
+    // Call OpenAI TTS API
+    try {
+      const oaiResponse = await axios({
+        method: 'post',
+        url: 'https://api.openai.com/v1/audio/speech',
+        headers: {
+          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        data: {
+          model: 'tts-1',
+          voice: voice,
+          input: text,
+          speed: parseFloat(speed) || 1.0,
+          response_format: 'mp3'
+        },
+        responseType: 'arraybuffer'
+      });
+      
+      // Save the audio file
+      await fs.promises.writeFile(fullOutputPath, oaiResponse.data);
+      
+      // Calculate audio duration (with fallback)
+      let duration = 3; // Default duration
+      try {
+        if (mp3Duration) {
+          duration = await mp3Duration(fullOutputPath);
+          console.log(`Generated audio duration: ${duration} seconds`);
+        } else {
+          console.warn("mp3Duration not available, using default duration");
+        }
+      } catch (durationError) {
+        console.error("Failed to calculate audio duration:", durationError);
+        // Continue with default duration
+      }
+      
+      // Upload to Cloudinary if enabled
+      let finalUrl = `http://localhost:${PORT}/audio/${path.basename(outputPath)}`;
+      
+      if (USE_CLOUDINARY) {
+        try {
+          const cloudinaryResult = await uploadToCloudinary(oaiResponse.data, 'auto', 'mp3');
+          if (cloudinaryResult && cloudinaryResult.secure_url) {
+            finalUrl = cloudinaryResult.secure_url;
+            console.log("Uploaded narration to Cloudinary:", finalUrl);
+          }
+        } catch (cloudinaryError) {
+          console.error("Cloudinary upload failed, using local URL instead:", cloudinaryError);
+        }
+      } else {
+        console.log("Cloudinary disabled, using local URL:", finalUrl);
+      }
+      
+      // Return success with the audio URL and duration
+      return res.json({
+        success: true,
+        audioUrl: finalUrl,
+        duration: duration
+      });
+      
+    } catch (oaiError) {
+      console.error("OpenAI API error:", oaiError.response?.data || oaiError.message);
+      // Get detailed error message if available
+      const errorMessage = oaiError.response?.data?.error?.message || 
+                           oaiError.response?.data?.message || 
+                           oaiError.message || 
+                           'Unknown OpenAI API error';
+      
+      return res.status(500).json({
+        success: false,
+        message: 'OpenAI TTS generation failed',
+        error: errorMessage
+      });
+    }
+    
+  } catch (error) {
+    console.error("Server error in narration generation:", error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error in narration generation',
+      error: error.message
+    });
+  }
+});
+
+// Preview endpoint - uses the same logic but with shorter text
+app.post('/api/preview-narration', async (req, res) => {
+  try {
+    const { text, voice, speed } = req.body;
+    
+    if (!text || !voice) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Text and voice are required' 
+      });
+    }
+    
+    // Check if OpenAI API key is set
+    if (!process.env.OPENAI_API_KEY) {
+      console.error("OpenAI API key is not set in environment variables");
+      return res.status(500).json({
+        success: false,
+        message: 'OpenAI API key is not configured on the server'
+      });
+    }
+    
+    // For preview, only use the first 100 characters
+    const previewText = text.substring(0, 100) + (text.length > 100 ? '...' : '');
+    console.log("Generating narration preview with params:", { text: previewText, voice, speed });
+    
+    // Generate a unique filename for the preview
+    const timestamp = Date.now();
+    const outputPath = `outputs/preview_${timestamp}.mp3`;
+    const fullOutputPath = path.join(__dirname, outputPath);
+    
+    // Create directories if they don't exist
+    await fs.promises.mkdir(path.dirname(fullOutputPath), { recursive: true });
+    
+    // Call OpenAI TTS API
+    try {
+      const oaiResponse = await axios({
+        method: 'post',
+        url: 'https://api.openai.com/v1/audio/speech',
+        headers: {
+          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        data: {
+          model: 'tts-1',
+          voice: voice,
+          input: previewText,
+          speed: parseFloat(speed) || 1.0,
+          response_format: 'mp3'
+        },
+        responseType: 'arraybuffer'
+      });
+      
+      // Save the audio file
+      await fs.promises.writeFile(fullOutputPath, oaiResponse.data);
+      
+      // Preview doesn't need Cloudinary, just use local URL
+      const finalUrl = `http://localhost:${PORT}/${outputPath}`;
+      
+      // Return success with the audio URL
+      return res.json({
+        success: true,
+        audioUrl: finalUrl
+      });
+      
+    } catch (oaiError) {
+      console.error("OpenAI API error:", oaiError.response?.data || oaiError.message);
+      // Get detailed error message if available
+      const errorMessage = oaiError.response?.data?.error?.message || 
+                           oaiError.response?.data?.message || 
+                           oaiError.message || 
+                           'Unknown OpenAI API error';
+      
+      return res.status(500).json({
+        success: false,
+        message: 'OpenAI TTS preview generation failed',
+        error: errorMessage
+      });
+    }
+    
+  } catch (error) {
+    console.error("Server error in narration preview:", error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error in narration preview',
+      error: error.message
+    });
+  }
+});
+
+// Add mock routes for narration (for testing without OpenAI API key)
+app.post('/api/mock-generate-narration', async (req, res) => {
+  try {
+    const { text, voice, speed } = req.body;
+    
+    if (!text || !voice) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Text and voice are required' 
+      });
+    }
+    
+    console.log("Mock narration generation with params:", { text, voice, speed });
+    
+    // Generate a delay to simulate API call
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    // Return mock data
+    return res.json({
+      success: true,
+      audioUrl: 'https://file-examples.com/storage/fe8c7eef0c6364f6c9504cc/2017/11/file_example_MP3_700KB.mp3',
+      duration: 5.32
+    });
+  } catch (error) {
+    console.error("Server error in mock narration generation:", error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error in mock narration generation',
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/mock-preview-narration', async (req, res) => {
+  try {
+    const { text, voice, speed } = req.body;
+    
+    if (!text || !voice) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Text and voice are required' 
+      });
+    }
+    
+    // Generate a delay to simulate API call
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    // Return mock data with a public domain audio file
+    return res.json({
+      success: true,
+      audioUrl: 'https://file-examples.com/storage/fe8c7eef0c6364f6c9504cc/2017/11/file_example_MP3_700KB.mp3'
+    });
+  } catch (error) {
+    console.error("Server error in mock preview generation:", error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error in mock preview generation',
+      error: error.message
+    });
+  }
+});
+
+// Add a dedicated endpoint for audio streaming with proper headers
+app.get('/audio/:filename', (req, res) => {
+  const filename = req.params.filename;
+  const audioPath = path.join(__dirname, 'outputs', filename);
+  
+  // Check if file exists
+  if (!fs.existsSync(audioPath)) {
+    return res.status(404).send('Audio file not found');
+  }
+  
+  // Get file stats
+  const stat = fs.statSync(audioPath);
+  const fileSize = stat.size;
+  const range = req.headers.range;
+  
+  // Set proper MIME type for MP3
+  const contentType = 'audio/mpeg';
+  
+  // Handle range requests (important for audio seeking)
+  if (range) {
+    const parts = range.replace(/bytes=/, "").split("-");
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+    const chunkSize = (end - start) + 1;
+    const file = fs.createReadStream(audioPath, { start, end });
+    
+    // Set proper headers for range requests
+    res.writeHead(206, {
+      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': chunkSize,
+      'Content-Type': contentType,
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+      'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept, Range',
+      'Cache-Control': 'public, max-age=31536000', // Cache for a year
+      'X-Content-Type-Options': 'nosniff'
+    });
+    
+    // Pipe the file stream to response
+    file.pipe(res);
+  } else {
+    // If no range is requested, send the entire file
+    res.writeHead(200, {
+      'Content-Length': fileSize,
+      'Content-Type': contentType,
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+      'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept, Range',
+      'Cache-Control': 'public, max-age=31536000', // Cache for a year
+      'X-Content-Type-Options': 'nosniff'
+    });
+    
+    // Create read stream and pipe to response
+    const fileStream = fs.createReadStream(audioPath);
+    fileStream.pipe(res);
+  }
+});

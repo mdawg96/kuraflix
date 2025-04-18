@@ -10,17 +10,17 @@ const SceneEditorPage = () => {
 
   // Placeholder character data (in real app, this would be loaded from API)
   const availableCharacters = [
-    { id: 1, name: 'Hiro', imageUrl: 'https://via.placeholder.com/100x100.png?text=Hiro' },
-    { id: 2, name: 'Yuki', imageUrl: 'https://via.placeholder.com/100x100.png?text=Yuki' },
-    { id: 3, name: 'Kenta', imageUrl: 'https://via.placeholder.com/100x100.png?text=Kenta' },
+    { id: 1, name: 'Hiro', imageUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' },
+    { id: 2, name: 'Yuki', imageUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' },
+    { id: 3, name: 'Kenta', imageUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' },
   ];
 
   // Placeholder backgrounds
   const availableBackgrounds = [
-    { id: 1, name: 'School', imageUrl: 'https://via.placeholder.com/200x100.png?text=School' },
-    { id: 2, name: 'City Street', imageUrl: 'https://via.placeholder.com/200x100.png?text=City' },
-    { id: 3, name: 'Beach', imageUrl: 'https://via.placeholder.com/200x100.png?text=Beach' },
-    { id: 4, name: 'Forest', imageUrl: 'https://via.placeholder.com/200x100.png?text=Forest' },
+    { id: 1, name: 'School', imageUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' },
+    { id: 2, name: 'City Street', imageUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' },
+    { id: 3, name: 'Beach', imageUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' },
+    { id: 4, name: 'Forest', imageUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' },
   ];
 
   const toggleCharacter = (character) => {
@@ -38,7 +38,7 @@ const SceneEditorPage = () => {
     
     // Simulate API call with timeout
     setTimeout(() => {
-      setScenePreview('https://via.placeholder.com/640x360.png?text=AI+Generated+Anime+Scene');
+      setScenePreview('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=');
       setGenerating(false);
     }, 3000);
   };
@@ -100,7 +100,7 @@ const SceneEditorPage = () => {
                     >
                       <img src={background.imageUrl} alt={background.name} className="w-full h-auto rounded-md" />
                       <p className="text-sm text-center mt-1">{background.name}</p>
-                    </div>
+                      </div>
                   ))}
                 </div>
               </div>
@@ -206,3 +206,6 @@ const SceneEditorPage = () => {
 };
 
 export default SceneEditorPage; 
+
+
+  

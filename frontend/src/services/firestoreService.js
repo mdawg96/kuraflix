@@ -1,4 +1,4 @@
-import { characterFirestore } from '../firebase/firestore';
+import { characterFirestore, animeFirestore } from '../firebase/firestore';
 import { auth, db } from '../firebase/config';
 
 // Add database information to all service calls for debugging
@@ -207,6 +207,171 @@ export const firestoreService = {
       return {
         success: false,
         error: error.message || "Failed to delete character"
+      };
+    }
+  },
+
+  /**
+   * Get all anime projects for the current user
+   * @returns {Promise<{success: boolean, data: Array, error?: string}>}
+   */
+  getAnimeProjects: async () => {
+    try {
+      console.log('FirestoreService: Fetching anime projects');
+      const response = await animeFirestore.getAnimeProjects();
+      console.log('FirestoreService: Raw response from Firestore:', response);
+      
+      if (response?.data?.success) {
+        return {
+          success: true,
+          data: response.data.projects || []
+        };
+      } else {
+        console.error('FirestoreService: Invalid response structure:', response);
+        return {
+          success: false,
+          data: [],
+          error: 'Invalid response structure from Firestore'
+        };
+      }
+    } catch (error) {
+      console.error('FirestoreService: Error fetching anime projects:', error);
+      return {
+        success: false,
+        data: [],
+        error: error.message || 'Failed to fetch anime projects'
+      };
+    }
+  },
+
+  /**
+   * Get a specific anime project
+   * @param {string} projectId - The ID of the project to fetch
+   * @returns {Promise<{success: boolean, data: Object, error?: string}>}
+   */
+  getAnimeProject: async (projectId) => {
+    try {
+      console.log(`FirestoreService: Fetching anime project ${projectId}`);
+      const response = await animeFirestore.getAnimeProject(projectId);
+      console.log('FirestoreService: Raw response from Firestore:', response);
+      
+      if (response?.data?.success) {
+        return {
+          success: true,
+          data: response.data.project || {}
+        };
+      } else {
+        console.error('FirestoreService: Invalid response structure:', response);
+        return {
+          success: false,
+          data: {},
+          error: response?.data?.message || 'Invalid response structure from Firestore'
+        };
+      }
+    } catch (error) {
+      console.error(`FirestoreService: Error fetching anime project ${projectId}:`, error);
+      return {
+        success: false,
+        data: {},
+        error: error.message || 'Failed to fetch anime project'
+      };
+    }
+  },
+
+  /**
+   * Save a new anime project
+   * @param {Object} projectData - The project data to save
+   * @returns {Promise<{success: boolean, data: Object, error?: string}>}
+   */
+  saveAnimeProject: async (projectData) => {
+    try {
+      console.log('FirestoreService: Saving anime project');
+      const response = await animeFirestore.saveAnimeProject(projectData);
+      console.log('FirestoreService: Raw response from Firestore:', response);
+      
+      if (response?.data?.success) {
+        return {
+          success: true,
+          data: response.data.project || {}
+        };
+      } else {
+        console.error('FirestoreService: Invalid response structure:', response);
+        return {
+          success: false,
+          data: {},
+          error: response?.data?.message || 'Invalid response structure from Firestore'
+        };
+      }
+    } catch (error) {
+      console.error('FirestoreService: Error saving anime project:', error);
+      return {
+        success: false,
+        data: {},
+        error: error.message || 'Failed to save anime project'
+      };
+    }
+  },
+
+  /**
+   * Update an existing anime project
+   * @param {string} projectId - The ID of the project to update
+   * @param {Object} projectData - The updated project data
+   * @returns {Promise<{success: boolean, data: Object, error?: string}>}
+   */
+  updateAnimeProject: async (projectId, projectData) => {
+    try {
+      console.log(`FirestoreService: Updating anime project ${projectId}`);
+      const response = await animeFirestore.updateAnimeProject(projectId, projectData);
+      console.log('FirestoreService: Raw response from Firestore:', response);
+      
+      if (response?.data?.success) {
+        return {
+          success: true,
+          data: response.data.project || {}
+        };
+      } else {
+        console.error('FirestoreService: Invalid response structure:', response);
+        return {
+          success: false,
+          data: {},
+          error: response?.data?.message || 'Invalid response structure from Firestore'
+        };
+      }
+    } catch (error) {
+      console.error(`FirestoreService: Error updating anime project ${projectId}:`, error);
+      return {
+        success: false,
+        data: {},
+        error: error.message || 'Failed to update anime project'
+      };
+    }
+  },
+
+  /**
+   * Delete an anime project
+   * @param {string} projectId - The ID of the project to delete
+   * @returns {Promise<{success: boolean, error?: string}>}
+   */
+  deleteAnimeProject: async (projectId) => {
+    try {
+      console.log(`FirestoreService: Deleting anime project ${projectId}`);
+      const response = await animeFirestore.deleteAnimeProject(projectId);
+      console.log('FirestoreService: Raw response from Firestore:', response);
+      
+      if (response?.data?.success) {
+        return { success: true };
+      } else {
+        console.error('FirestoreService: Invalid response structure:', response);
+        return {
+          success: false,
+          error: response?.data?.message || 'Invalid response structure from Firestore'
+        };
+      }
+    } catch (error) {
+      console.error(`FirestoreService: Error deleting anime project ${projectId}:`, error);
+      return {
+        success: false,
+        error: error.message || 'Failed to delete anime project'
       };
     }
   }

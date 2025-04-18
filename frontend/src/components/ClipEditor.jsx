@@ -1,31 +1,246 @@
 import React, { useState, useEffect } from 'react';
+import { toast } from 'react-hot-toast';
+import AnimationPhase from './ClipEditor/AnimationPhase';
+import ImagePhase from './ClipEditor/ImagePhase';
+
+// Helper function to handle various image path formats
+const getImageUrl = (imagePath) => {
+  // Return placeholder if no image path provided
+  if (!imagePath) {
+    return "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MCIgaGVpZ2h0PSI1MCIgdmlld0JveD0iMCAwIDUwIDUwIj48cmVjdCB3aWR0aD0iNTAiIGhlaWdodD0iNTAiIGZpbGw9IiM2NjYiLz48dGV4dCB4PSIyNSIgeT0iMzAiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxMiIgZmlsbD0iI2ZmZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+Q2hhcjwvdGV4dD48L3N2Zz4=";
+  }
+  
+  try {
+    // If already a data URL, use it directly
+    if (imagePath.startsWith('data:')) {
+      return imagePath;
+    }
+    
+    // If already a full URL, use it directly
+    if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+      return imagePath;
+    }
+    
+    // Handle Firebase storage URLs
+    if (imagePath.includes('firebasestorage.googleapis.com')) {
+      return imagePath;
+    }
+    
+    // Clean any leading slashes
+    const cleanPath = imagePath.startsWith('./') 
+      ? imagePath.slice(2) 
+      : imagePath.startsWith('/') 
+        ? imagePath.slice(1) 
+        : imagePath;
+    
+    // For all other relative paths, try to resolve from current domain
+    return `/${cleanPath}`;
+  } catch (error) {
+    console.error('Error processing image URL, using fallback:', error);
+    return "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MCIgaGVpZ2h0PSI1MCIgdmlld0JveD0iMCAwIDUwIDUwIj48cmVjdCB3aWR0aD0iNTAiIGhlaWdodD0iNTAiIGZpbGw9IiM2NjYiLz48dGV4dCB4PSIyNSIgeT0iMzAiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxMiIgZmlsbD0iI2ZmZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+RXJyb3I8L3RleHQ+PC9zdmc+";
+  }
+};
 
 const ClipEditor = ({
   selectedClip,
   onUpdateClip,
-  onAddTextElement,
-  onUpdateTextElement,
-  onDeleteTextElement,
   onGenerateImage,
   onUploadImage,
   isGenerating,
   generationProgress,
   allCharacters = [],
-  projectCharacters = []
+  projectCharacters = [],
+  onAddToProject,
+  onRemoveFromProject
 }) => {
-  const [activeTab, setActiveTab] = useState('content');
   const [editorPhase, setEditorPhase] = useState('setup');
   const [selectedCharacters, setSelectedCharacters] = useState([]);
   const [animationPrompt, setAnimationPrompt] = useState('');
   const [isAnimating, setIsAnimating] = useState(false);
   const [animationProgress, setAnimationProgress] = useState(0);
   const [characterTab, setCharacterTab] = useState('project');
+
+  // Define updateClipProperty before it's used in any useEffect
+  const updateClipProperty = (property, value) => {
+    if (!selectedClip) return;
+    
+    const updatedClip = { ...selectedClip };
+    updatedClip[property] = value;
+    
+    // Handle special properties
+    if (property === 'trimStart' || property === 'trimEnd') {
+      // Update animation duration based on trim values
+      if (updatedClip.trimStart !== undefined && updatedClip.trimEnd !== undefined) {
+        updatedClip.animationDuration = updatedClip.trimEnd - updatedClip.trimStart;
+      }
+    }
+    
+    onUpdateClip(updatedClip);
+  };
+  
+  // Handle phase changes to make sure animation URL persists
+  const handlePhaseChange = (newPhase) => {
+    console.log(`Changing editor phase from ${editorPhase} to ${newPhase}`);
+    
+    // Special handling when going to animation phase
+    if (newPhase === 'animation') {
+      // Check if we have a URL in localStorage or window cache that should be forced
+      const lastClipId = localStorage.getItem('lastClipId');
+      const lastAnimationUrl = localStorage.getItem('lastAnimationUrl');
+      const windowCacheUrl = window.clipAnimationUrls?.[selectedClip.id];
+      
+      // Create a backup of the animation URL if it exists but might get lost in phase change
+      if (selectedClip.animationUrl) {
+        console.log("Backing up existing animation URL before phase change:", selectedClip.animationUrl);
+        // Save to window cache
+        if (!window.clipAnimationUrls) {
+          window.clipAnimationUrls = {};
+        }
+        window.clipAnimationUrls[selectedClip.id] = selectedClip.animationUrl;
+        
+        // Also save to localStorage
+        try {
+          localStorage.setItem('lastAnimationUrl', selectedClip.animationUrl);
+          localStorage.setItem('lastClipId', selectedClip.id);
+        } catch (err) {
+          console.error("Failed to backup animation URL to localStorage:", err);
+        }
+      }
+      
+      // Check for missing URL and try to restore it
+      if (!selectedClip.animationUrl) {
+        let urlToUse = null;
+        
+        // First check window cache
+        if (windowCacheUrl) {
+          console.log("Restoring animation URL from window cache before phase change:", windowCacheUrl);
+          urlToUse = windowCacheUrl;
+        } 
+        // Then check localStorage
+        else if (selectedClip.id === lastClipId && lastAnimationUrl) {
+          console.log("Restoring animation URL from localStorage before phase change:", lastAnimationUrl);
+          urlToUse = lastAnimationUrl;
+        }
+        
+        // Apply the URL restoration if we found one
+        if (urlToUse) {
+          // Apply animation URL directly 
+          updateClipProperty('animationUrl', urlToUse);
+          updateClipProperty('animated', true);
+        }
+      }
+    }
+    
+    // Update the phase
+    setEditorPhase(newPhase);
+  };
   
   useEffect(() => {
     if (selectedClip && selectedClip.characters) {
+      console.log("Setting selected characters from clip:", selectedClip.characters);
       setSelectedCharacters(selectedClip.characters);
+    } else {
+      console.log("No characters found in selected clip, using empty array");
+      setSelectedCharacters([]);
     }
-  }, [selectedClip]);
+    
+    // Debug logging
+    console.log("ClipEditor received characters:", { 
+      projectChars: projectCharacters?.length || 0,
+      allChars: allCharacters?.length || 0,
+      selectedClipChars: selectedClip?.characters?.length || 0
+    });
+    
+    if (allCharacters?.length > 0) {
+      console.log("All characters available:", allCharacters.map(c => ({id: c.id, name: c.name})));
+    } else {
+      console.warn("No characters available in allCharacters");
+    }
+    
+    if (projectCharacters?.length > 0) {
+      console.log("Project characters available:", projectCharacters.map(c => ({id: c.id, name: c.name})));
+    } else {
+      console.warn("No characters available in projectCharacters");
+    }
+  }, [selectedClip, projectCharacters, allCharacters]);
+
+  // Record animation URLs to a global cache
+  useEffect(() => {
+    // If we have an animation URL, store it in a more permanent ref
+    if (selectedClip?.id && selectedClip?.animationUrl) {
+      console.log("Saving animation URL to global window cache:", selectedClip.animationUrl);
+      // Use window as global storage for clips
+      if (!window.clipAnimationUrls) {
+        window.clipAnimationUrls = {};
+      }
+      window.clipAnimationUrls[selectedClip.id] = selectedClip.animationUrl;
+    }
+    
+    // If we don't have a URL but one exists in the cache, restore it
+    if (selectedClip?.id && !selectedClip.animationUrl && window.clipAnimationUrls?.[selectedClip.id]) {
+      const cachedUrl = window.clipAnimationUrls[selectedClip.id];
+      console.log("Restoring animation URL from global cache:", cachedUrl);
+      // Call updateClipProperty safely
+      if (selectedClip && onUpdateClip) {
+        // Update using a direct object update to avoid circular reference
+        const updatedClip = { 
+          ...selectedClip, 
+          animationUrl: cachedUrl, 
+          animated: true 
+        };
+        onUpdateClip(updatedClip);
+      }
+    }
+  }, [selectedClip, onUpdateClip]);
+
+  // This is a special useEffect for handling animation phase-specific logic
+  useEffect(() => {
+    // Special handling for animation phase
+    if (editorPhase === 'animation' && selectedClip) {
+      console.log("Animation phase active, checking for URL...");
+      
+      // If we don't have an animation URL, try to find one
+      if (!selectedClip.animationUrl) {
+        console.log("No animation URL found for clip:", selectedClip.id);
+        
+        // Check window cache first
+        const windowCacheUrl = window.clipAnimationUrls?.[selectedClip.id];
+        if (windowCacheUrl) {
+          console.log("Found URL in window cache:", windowCacheUrl);
+          updateClipProperty('animationUrl', windowCacheUrl);
+          updateClipProperty('animated', true);
+          return;
+        }
+        
+        // Then check localStorage
+        try {
+          const savedClipId = localStorage.getItem('lastClipId');
+          const savedUrl = localStorage.getItem('lastAnimationUrl');
+          
+          if (savedClipId === selectedClip.id && savedUrl) {
+            console.log("Found URL in localStorage:", savedUrl);
+            updateClipProperty('animationUrl', savedUrl);
+            updateClipProperty('animated', true);
+            return;
+          }
+        } catch (err) {
+          console.error("Error accessing localStorage:", err);
+        }
+        
+        // If nothing is available, check if there's a URL in ImagePhase logs
+        // We could even try a filename based on the timestamp in clip ID
+        const timestampMatch = selectedClip.id.match(/clip-([0-9]+)/);
+        if (timestampMatch && timestampMatch[1]) {
+          const potentialUrl = `http://localhost:5001/outputs/animation_${timestampMatch[1]}.mp4`;
+          console.log("Trying URL based on clip ID timestamp:", potentialUrl);
+          
+          // Set this URL and see if it loads
+          updateClipProperty('animationUrl', potentialUrl);
+          updateClipProperty('animated', true);
+        }
+      }
+    }
+  }, [editorPhase, selectedClip?.id]);
 
   if (!selectedClip) {
     return (
@@ -34,155 +249,348 @@ const ClipEditor = ({
           <svg className="w-12 h-12 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
           </svg>
-          <p className="text-lg">Select a clip to edit</p>
+          <p className="text-lg font-bold mb-2">No Clip Selected</p>
+          <p className="text-sm mb-4">Double-click on a clip in the timeline to edit it</p>
+          <div className="bg-gray-700 p-3 rounded-md inline-block">
+            <div className="flex items-center text-sm">
+              <svg className="w-5 h-5 mr-2 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              <span>Tip: You can also click "Add Video" in the timeline controls</span>
+            </div>
+          </div>
         </div>
       </div>
     );
   }
 
-  const updateClipProperty = (property, value) => {
-    onUpdateClip({
-      ...selectedClip,
-      [property]: value
-    });
-  };
-
-  const updateClipTiming = (startTime, endTime) => {
-    onUpdateClip({
-      ...selectedClip,
-      startTime: Math.max(0, startTime),
-      endTime: Math.max(startTime + 0.5, endTime)
-    });
-  };
-  
   const handleGenerateImage = () => {
+    // Important: Make sure we update the clip with the selected characters first
     const updatedClip = {
       ...selectedClip,
       characters: selectedCharacters
     };
+    
+    console.log("Generating image with characters:", selectedCharacters);
+    
+    // Update the clip before generating image
     onUpdateClip(updatedClip);
     
+    // Now generate the image with the updated characters
     onGenerateImage();
     
     setEditorPhase('image');
   };
   
-  const startAnimation = () => {
+  const startAnimation = async () => {
     if (!selectedClip.image) {
       alert("Please generate or upload an image first");
       return;
     }
     
+    if (!selectedClip.animationDescription) {
+      alert("Please provide an animation description");
+      return;
+    }
+    
+    console.log("Starting animation generation process");
     setIsAnimating(true);
+    setAnimationProgress(5); // Start at 5% to show some initial progress
     
-    const charactersText = selectedCharacters.map(c => c.name).join(', ');
-    let prompt = `SCENE: ${selectedClip.environment} with ${charactersText}`;
-    prompt += selectedClip.action ? ` - ${selectedClip.action}` : '';
-    prompt += `\n\nMOTION: Camera slowly pans across the scene, showing the characters with subtle movement.`;
-    prompt += `\n\nSTYLE: High-quality ${selectedClip.style} style with smooth animation.`;
-    
-    setAnimationPrompt(prompt);
-    
-    let progress = 0;
-    const interval = setInterval(() => {
-      progress += 5;
-      setAnimationProgress(progress);
+    try {
+      const charactersText = selectedCharacters.map(c => c.name).join(', ');
+      let prompt = `SCENE: ${selectedClip.environment} with ${charactersText}`;
+      prompt += selectedClip.action ? ` - ${selectedClip.action}` : '';
+      prompt += `\n\nMOTION: ${selectedClip.animationDescription}`;
+      prompt += `\n\nSTYLE: High-quality ${selectedClip.style} style with smooth animation.`;
+      prompt += `\n\nDURATION: ${selectedClip.animationDuration || 5} seconds`;
       
-      if (progress >= 100) {
-        clearInterval(interval);
-        setIsAnimating(false);
-        
-        updateClipProperty('animated', true);
-        updateClipProperty('animationUrl', selectedClip.image);
+      setAnimationPrompt(prompt);
+      console.log("Animation prompt set:", prompt);
+      
+      // Start animation generation and get job ID
+      const apiUrl = 'http://localhost:5001'; // Hardcode the port to 5001
+      console.log("Using API URL:", apiUrl);
+      
+      // First step - submit job
+      toast("Starting animation process with Runway...");
+      setAnimationProgress(10);
+      
+      console.log("Submitting animation request to API with params:", {
+        imageLength: selectedClip.image?.length || 0,
+        prompt: selectedClip.animationDescription,
+        duration: selectedClip.animationDuration || 5,
+        style: selectedClip.style
+      });
+      
+      // The image could be any format - data URL, local file, or https URL
+      // The backend will handle uploading to Cloudinary if needed
+      const response = await fetch(`${apiUrl}/api/generate-animation`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          image: selectedClip.image,
+          prompt: selectedClip.animationDescription,
+          duration: selectedClip.animationDuration || 5,
+          style: selectedClip.style
+        })
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error("API returned error:", errorData);
+        throw new Error(`Animation generation failed: ${errorData.message || response.statusText}`);
       }
-    }, 300);
+      
+      const data = await response.json();
+      console.log("API response data:", data);
+      
+      if (data.success && data.animationUrl) {
+        // Construct the full animation URL
+        let fullAnimationUrl = data.animationUrl;
+        
+        // Make sure it always has the correct prefix
+        if (!fullAnimationUrl.startsWith('http://')) {
+          // If it's a relative path, add the full API URL
+          if (fullAnimationUrl.startsWith('/')) {
+            fullAnimationUrl = apiUrl + fullAnimationUrl;
+          } else {
+            fullAnimationUrl = `${apiUrl}/${fullAnimationUrl}`;
+          }
+        }
+        
+        console.log("Generated animation URL:", fullAnimationUrl);
+        
+        // Simulate progress while Runway does its work
+        let currentProgress = 20;
+        const progressInterval = setInterval(() => {
+          currentProgress += 5;
+          if (currentProgress >= 95) {
+            clearInterval(progressInterval);
+          } else {
+            setAnimationProgress(currentProgress);
+          }
+        }, 1000);
+        
+        // Animation is ready
+        setAnimationProgress(100);
+        
+        // Save animation URL to localStorage for debugging
+        try {
+          localStorage.setItem('lastAnimationUrl', fullAnimationUrl);
+          localStorage.setItem('lastClipId', selectedClip.id);
+          console.log("Saved animation URL to localStorage for debugging");
+        } catch (err) {
+          console.error("Failed to save to localStorage:", err);
+        }
+        
+        // Update clip with animation data - important to create a new object
+        console.log("Updating clip with animation data");
+        
+        // Create a complete new clip object with all properties
+        const animatedClip = {
+          ...selectedClip,
+          animationUrl: fullAnimationUrl,
+          animated: true
+        };
+        
+        // Log the update details
+        console.log("Animation update details:", {
+          clipId: animatedClip.id,
+          originalUrl: selectedClip.animationUrl,
+          newUrl: fullAnimationUrl,
+          animated: true
+        });
+        
+        // Update the clip
+        onUpdateClip(animatedClip);
+        
+        toast.success('Animation generated successfully!');
+        clearInterval(progressInterval);
+        
+        // Short delay before switching to animation phase
+        setTimeout(() => {
+          console.log("Switching to animation phase with URL:", fullAnimationUrl);
+          setEditorPhase('animation');
+        }, 100);
+      } else {
+        console.error("Invalid API response - missing animation URL", data);
+        throw new Error('No animation URL returned from API');
+      }
+    } catch (error) {
+      console.error('Error generating animation:', error);
+      toast.error(`Failed to generate animation: ${error.message}`);
+    } finally {
+      setIsAnimating(false);
+    }
   };
   
   const handleCharacterToggle = (character) => {
+    console.log("ClipEditor: Character toggle for", character.name);
+    
+    // Check if character is already selected
     const isSelected = selectedCharacters.some(c => c.id === character.id);
     
+    // Create new array of characters based on selection state
+    let updatedCharacters;
     if (isSelected) {
-      setSelectedCharacters(selectedCharacters.filter(c => c.id !== character.id));
+      console.log(`ClipEditor: Removing character ${character.name || character.id} from selection`);
+      updatedCharacters = selectedCharacters.filter(c => c.id !== character.id);
     } else {
-      setSelectedCharacters([...selectedCharacters, character]);
+      console.log(`ClipEditor: Adding character ${character.name || character.id} to selection`);
+      updatedCharacters = [...selectedCharacters, character];
     }
+    
+    // Update both local state and parent clip
+    setSelectedCharacters(updatedCharacters);
+    
+    // Immediately update the parent component's state
+    onUpdateClip({
+      ...selectedClip,
+      characters: updatedCharacters
+    });
+    
+    console.log("ClipEditor: Updated character selection:", updatedCharacters);
   };
 
   const renderSetupPhase = () => (
     <div>
       <div className="mb-6">
-        <h3 className="text-lg font-semibold text-white mb-3">Characters</h3>
+        <div className="flex justify-between items-center mb-3">
+          <h3 className="text-white font-medium flex items-center">
+            <svg className="w-5 h-5 mr-2 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
+            Characters ({selectedCharacters.length} selected)
+          </h3>
+          
+          <button 
+            onClick={() => window.location.href = '/character-creator'} 
+            className="text-xs text-blue-500 hover:text-blue-300 transition-colors duration-200 flex items-center"
+          >
+            <svg className="w-4 h-4 inline mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Create Character
+          </button>
+        </div>
         
         <div className="flex border-b border-gray-700 mb-2">
-          <button
-            className={`py-1 px-3 text-sm font-medium ${characterTab === 'project' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-gray-400'}`}
-            onClick={() => setCharacterTab('project')}
-          >
-            Project Characters
-          </button>
-          <button
-            className={`py-1 px-3 text-sm font-medium ${characterTab === 'all' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-gray-400'}`}
-            onClick={() => setCharacterTab('all')}
-          >
-            All Characters
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setCharacterTab('project')}
+              className={`px-3 py-1 text-sm rounded-md ${
+                characterTab === 'project'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+              }`}
+            >
+              Project Characters
+            </button>
+            <button
+              onClick={() => setCharacterTab('all')}
+              className={`px-3 py-1 text-sm rounded-md ${
+                characterTab === 'all'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+              }`}
+            >
+              All Characters
+            </button>
+          </div>
         </div>
         
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-60 overflow-y-auto p-1">
           {characterTab === 'project' ? (
-            projectCharacters.length > 0 ? (
+            projectCharacters?.length > 0 ? (
               projectCharacters.map(character => (
                 <div 
                   key={character.id}
                   onClick={() => handleCharacterToggle(character)}
-                  className={`cursor-pointer bg-gray-700 p-2 rounded-lg flex flex-col items-center ${
-                    selectedCharacters.some(c => c.id === character.id) ? 'ring-2 ring-blue-500' : 'hover:bg-gray-600'
+                  className={`relative cursor-pointer ${
+                    selectedCharacters.some(c => c.id === character.id) ? 'bg-gray-600' : ''
                   }`}
                 >
                   <img
-                    src={character.thumbnail || character.imageUrl || "data:image/svg+xml;charset=UTF-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2250%22%20height%3D%2250%22%20viewBox%3D%220%200%2050%2050%22%3E%3Crect%20width%3D%2250%22%20height%3D%2250%22%20fill%3D%22%23666%22%2F%3E%3Ctext%20x%3D%2225%22%20y%3D%2230%22%20font-family%3D%22Arial%22%20font-size%3D%2212%22%20fill%3D%22%23fff%22%20text-anchor%3D%22middle%22%3EChar%3C%2Ftext%3E%3C%2Fsvg%3E"}
+                    src={getImageUrl(character.thumbnail || character.imageUrl || character.imagePath)}
                     alt={character.name}
-                    className="w-12 h-12 object-cover rounded-md mb-1"
+                    className="w-16 h-16 object-cover"
                     onError={(e) => {
+                      console.log(`Image error for character ${character.name}:`, e);
                       e.target.onerror = null;
-                      e.target.src = "data:image/svg+xml;charset=UTF-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2250%22%20height%3D%2250%22%20viewBox%3D%220%200%2050%2050%22%3E%3Crect%20width%3D%2250%22%20height%3D%2250%22%20fill%3D%22%23666%22%2F%3E%3Ctext%20x%3D%2225%22%20y%3D%2230%22%20font-family%3D%22Arial%22%20font-size%3D%2212%22%20fill%3D%22%23fff%22%20text-anchor%3D%22middle%22%3EError%3C%2Ftext%3E%3C%2Fsvg%3E";
+                      e.target.src = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MCIgaGVpZ2h0PSI1MCIgdmlld0JveD0iMCAwIDUwIDUwIj48cmVjdCB3aWR0aD0iNTAiIGhlaWdodD0iNTAiIGZpbGw9IiM2NjYiLz48dGV4dCB4PSIyNSIgeT0iMjUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxMCIgZmlsbD0iI2ZmZiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9IjAuMzVlbSI+P3wvdGV4dD48L3N2Zz4=";
                     }}
                   />
-                  <span className="text-sm text-white truncate w-full text-center">{character.name}</span>
+                  <span className="text-xs text-white py-1">{character.name}</span>
+                  
+                  {/* Remove from project button */}
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (typeof onRemoveFromProject === 'function') {
+                        onRemoveFromProject(character);
+                      }
+                    }}
+                    title="Remove from project characters"
+                    className="absolute top-0 right-0 bg-red-600 hover:bg-red-700 text-white rounded-full w-5 h-5 flex items-center justify-center"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                    </svg>
+                  </button>
                 </div>
               ))
             ) : (
-              <div className="col-span-3 text-center p-4">
+              <div className="col-span-3 text-center my-4">
                 <p className="text-gray-400">No project characters available</p>
-                <p className="text-gray-400 text-sm mt-1">Try selecting from "All Characters" tab</p>
+                <p className="text-gray-400 text-xs mt-1">Try selecting from "All Characters" tab</p>
               </div>
             )
           ) : (
-            allCharacters.length > 0 ? (
+            allCharacters?.length > 0 ? (
               allCharacters.map(character => (
                 <div 
                   key={character.id}
                   onClick={() => handleCharacterToggle(character)}
-                  className={`cursor-pointer bg-gray-700 p-2 rounded-lg flex flex-col items-center ${
-                    selectedCharacters.some(c => c.id === character.id) ? 'ring-2 ring-blue-500' : 'hover:bg-gray-600'
+                  className={`relative cursor-pointer ${
+                    selectedCharacters.some(c => c.id === character.id) ? 'bg-gray-600' : ''
                   }`}
                 >
                   <img
-                    src={character.thumbnail || character.imageUrl || "data:image/svg+xml;charset=UTF-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2250%22%20height%3D%2250%22%20viewBox%3D%220%200%2050%2050%22%3E%3Crect%20width%3D%2250%22%20height%3D%2250%22%20fill%3D%22%23666%22%2F%3E%3Ctext%20x%3D%2225%22%20y%3D%2230%22%20font-family%3D%22Arial%22%20font-size%3D%2212%22%20fill%3D%22%23fff%22%20text-anchor%3D%22middle%22%3EChar%3C%2Ftext%3E%3C%2Fsvg%3E"}
+                    src={getImageUrl(character.thumbnail || character.imageUrl || character.imagePath)}
                     alt={character.name}
-                    className="w-12 h-12 object-cover rounded-md mb-1"
+                    className="w-16 h-16 object-cover"
                     onError={(e) => {
+                      console.log(`Image error for character ${character.name}:`, e);
                       e.target.onerror = null;
-                      e.target.src = "data:image/svg+xml;charset=UTF-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2250%22%20height%3D%2250%22%20viewBox%3D%220%200%2050%2050%22%3E%3Crect%20width%3D%2250%22%20height%3D%2250%22%20fill%3D%22%23666%22%2F%3E%3Ctext%20x%3D%2225%22%20y%3D%2230%22%20font-family%3D%22Arial%22%20font-size%3D%2212%22%20fill%3D%22%23fff%22%20text-anchor%3D%22middle%22%3EError%3C%2Ftext%3E%3C%2Fsvg%3E";
+                      e.target.src = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MCIgaGVpZ2h0PSI1MCIgdmlld0JveD0iMCAwIDUwIDUwIj48cmVjdCB3aWR0aD0iNTAiIGhlaWdodD0iNTAiIGZpbGw9IiM2NjYiLz48dGV4dCB4PSIyNSIgeT0iMjUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxMCIgZmlsbD0iI2ZmZiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9IjAuMzVlbSI+P3wvdGV4dD48L3N2Zz4=";
                     }}
                   />
-                  <span className="text-sm text-white truncate w-full text-center">{character.name}</span>
+                  <span className="text-xs text-white py-1">{character.name}</span>
+                  
+                  {/* Add to project button */}
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!projectCharacters.some(c => c.id === character.id) && typeof onAddToProject === 'function') {
+                        onAddToProject(character);
+                      }
+                    }}
+                    title="Add to project characters"
+                    className="absolute top-0 right-0 bg-green-600 hover:bg-green-700 text-white rounded-full w-5 h-5 flex items-center justify-center"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                  </button>
                 </div>
               ))
             ) : (
-              <div className="col-span-3 text-center p-4">
+              <div className="col-span-3 text-center my-4">
                 <p className="text-gray-400">No characters available</p>
-                <p className="text-gray-400 text-sm mt-1">Create characters in the Character Creator</p>
+                <p className="text-gray-400 text-xs mt-1">Create characters in the Character Creator</p>
                 <button 
                   onClick={() => window.location.href = '/character-creator'}
                   className="mt-2 px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm transition-colors duration-300"
@@ -252,7 +660,12 @@ const ClipEditor = ({
             <input
               type="file"
               accept="image/*"
-              onChange={onUploadImage}
+              onChange={(e) => {
+                // Pass the actual file rather than the event
+                if (e.target.files && e.target.files[0]) {
+                  onUploadImage(e.target.files[0]);
+                }
+              }}
               className="hidden"
               id="media-upload"
             />
@@ -268,199 +681,53 @@ const ClipEditor = ({
     </div>
   );
   
-  const renderImagePhase = () => (
-    <div>
-      <div className="mb-6">
-        <h3 className="text-lg font-semibold text-white mb-3">Generated Image</h3>
-        {isGenerating ? (
-          <div className="bg-gray-700 p-4 rounded-lg">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-white">Generating image...</span>
-              <span className="text-gray-400">{generationProgress}%</span>
-            </div>
-            <div className="w-full bg-gray-600 rounded-full h-2">
-              <div 
-                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                style={{ width: `${generationProgress}%` }}
-              ></div>
-            </div>
-          </div>
-        ) : (
-          <div className="bg-gray-900 p-4 rounded-lg aspect-video relative">
-            {selectedClip.image ? (
-              <img
-                src={selectedClip.image}
-                alt="Generated scene"
-                className="w-full h-full object-contain"
-              />
-            ) : (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <p className="text-gray-500">No image generated yet</p>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      <div className="mb-6">
-        <div className="flex justify-between items-center mb-3">
-          <h3 className="text-lg font-semibold text-white">Text Elements</h3>
-          <button
-            onClick={() => onAddTextElement(selectedClip.id)}
-            className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-sm"
-          >
-            Add Text
-          </button>
-        </div>
-        <div className="space-y-3 max-h-48 overflow-y-auto pr-2">
-          {selectedClip.textElements?.map((textElement, index) => (
-            <div key={textElement.id} className="bg-gray-700 p-3 rounded-lg">
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-white text-sm">Text {index + 1}</span>
-                <button
-                  onClick={() => onDeleteTextElement(selectedClip.id, textElement.id)}
-                  className="text-red-400 hover:text-red-300"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                </button>
-              </div>
-              <textarea
-                value={textElement.text}
-                onChange={(e) => onUpdateTextElement(selectedClip.id, textElement.id, { text: e.target.value })}
-                className="w-full bg-gray-800 text-white border border-gray-600 rounded px-2 py-1 text-sm h-20"
-                placeholder="Enter text..."
-              />
-              <div className="flex items-center mt-2 space-x-2">
-                <select
-                  value={textElement.style}
-                  onChange={(e) => onUpdateTextElement(selectedClip.id, textElement.id, { style: e.target.value })}
-                  className="bg-gray-800 text-white border border-gray-600 rounded px-2 py-1 text-sm"
-                >
-                  <option value="subtitle">Subtitle</option>
-                  <option value="caption">Caption</option>
-                  <option value="title">Title</option>
-                </select>
-                <input
-                  type="color"
-                  value={textElement.color || '#ffffff'}
-                  onChange={(e) => onUpdateTextElement(selectedClip.id, textElement.id, { color: e.target.value })}
-                  className="w-6 h-6 rounded border border-gray-600 cursor-pointer"
-                />
-              </div>
-            </div>
-          ))}
-          {(!selectedClip.textElements || selectedClip.textElements.length === 0) && (
-            <div className="text-center text-gray-400 py-4">
-              <p>No text elements added yet</p>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="mt-8">
-        <button
-          onClick={startAnimation}
-          disabled={!selectedClip.image || isAnimating}
-          className="w-full px-4 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded transition-colors duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          Animate with Runway
-        </button>
-        <p className="mt-2 text-gray-400 text-sm text-center">
-          Creates a motion clip from your still image
-        </p>
-      </div>
-      
-      <div className="mt-4 text-center">
-        <button
-          onClick={() => setEditorPhase('setup')}
-          className="text-blue-400 hover:text-blue-300 text-sm"
-        >
-          ← Back to scene setup
-        </button>
-      </div>
-    </div>
-  );
-  
-  const renderAnimationPhase = () => (
-    <div>
-      <div className="mb-6">
-        <h3 className="text-lg font-semibold text-white mb-3">Animation Preview</h3>
-        {isAnimating ? (
-          <div className="bg-gray-700 p-4 rounded-lg">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-white">Generating animation with Runway...</span>
-              <span className="text-gray-400">{animationProgress}%</span>
-            </div>
-            <div className="w-full bg-gray-600 rounded-full h-2">
-              <div 
-                className="bg-purple-600 h-2 rounded-full transition-all duration-300"
-                style={{ width: `${animationProgress}%` }}
-              ></div>
-            </div>
-          </div>
-        ) : (
-          <div className="bg-gray-900 p-4 rounded-lg aspect-video relative">
-            {selectedClip.animated ? (
-              <video
-                src={selectedClip.animationUrl}
-                autoPlay
-                loop
-                muted
-                playsInline
-                className="w-full h-full object-contain"
-              />
-            ) : (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <p className="text-gray-500">Animation not created yet</p>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      <div className="mb-6">
-        <div className="flex justify-between items-center mb-2">
-          <h3 className="text-lg font-semibold text-white">Runway Gen-2 Prompt</h3>
-          <button 
-            className="text-xs px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded"
-            onClick={() => navigator.clipboard.writeText(animationPrompt)}
-          >
-            Copy
-          </button>
-        </div>
-        <pre className="bg-gray-900 p-3 rounded-lg overflow-auto max-h-40 text-gray-300 text-sm whitespace-pre-wrap">
-          {animationPrompt}
-        </pre>
-      </div>
-
-      <div className="mt-4 text-center">
-        <button
-          onClick={() => setEditorPhase('image')}
-          className="text-blue-400 hover:text-blue-300 text-sm"
-        >
-          ← Back to image editing
-        </button>
-      </div>
-    </div>
-  );
+  // Modify the rendering to use this new handler
+  const renderContent = () => {
+    switch (editorPhase) {
+      case 'setup':
+        return renderSetupPhase();
+      case 'image':
+        return (
+          <ImagePhase
+            selectedClip={selectedClip}
+            updateClipProperty={updateClipProperty}
+            onGenerateImage={onGenerateImage}
+            onUploadImage={onUploadImage}
+            isGenerating={isGenerating}
+            generationProgress={generationProgress}
+            startAnimation={startAnimation}
+            isAnimating={isAnimating}
+            setEditorPhase={(phase) => handlePhaseChange(phase)}
+            onUpdateClip={onUpdateClip}
+          />
+        );
+      case 'animation':
+        return (
+          <AnimationPhase
+            selectedClip={selectedClip}
+            updateClipProperty={updateClipProperty}
+            onUpdateClip={onUpdateClip}
+            isAnimating={isAnimating}
+            animationProgress={animationProgress}
+            animationPrompt={animationPrompt}
+            setEditorPhase={(phase) => handlePhaseChange(phase)}
+          />
+        );
+      default:
+        return renderSetupPhase();
+    }
+  };
 
   return (
     <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg">
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-xl font-bold text-white">Clip Editor</h2>
-        <div className="flex space-x-1">
-          <span className="text-gray-400 text-sm">
-            Duration: {(selectedClip.endTime - selectedClip.startTime).toFixed(1)}s
-          </span>
-        </div>
       </div>
 
       <div className="flex items-center mb-6">
         <div 
-          className={`flex items-center ${editorPhase === 'setup' ? 'text-blue-500' : 'text-gray-500'}`}
-          onClick={() => setEditorPhase('setup')}
+          className={`flex items-center ${editorPhase === 'setup' ? 'text-blue-500' : 'text-gray-500'} ${isAnimating || isGenerating ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+          onClick={() => (!isAnimating && !isGenerating) ? setEditorPhase('setup') : null}
         >
           <div className={`w-6 h-6 rounded-full flex items-center justify-center ${editorPhase === 'setup' ? 'bg-blue-500 text-white' : 'bg-gray-700 text-gray-400'}`}>
             1
@@ -469,8 +736,8 @@ const ClipEditor = ({
         </div>
         <div className="flex-grow mx-2 h-px bg-gray-700"></div>
         <div 
-          className={`flex items-center ${editorPhase === 'image' ? 'text-blue-500' : 'text-gray-500'}`}
-          onClick={() => selectedClip.image ? setEditorPhase('image') : null}
+          className={`flex items-center ${editorPhase === 'image' ? 'text-blue-500' : 'text-gray-500'} ${isAnimating || isGenerating || !selectedClip.image ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+          onClick={() => (!isAnimating && !isGenerating && selectedClip.image) ? setEditorPhase('image') : null}
         >
           <div className={`w-6 h-6 rounded-full flex items-center justify-center ${editorPhase === 'image' ? 'bg-blue-500 text-white' : 'bg-gray-700 text-gray-400'}`}>
             2
@@ -479,8 +746,8 @@ const ClipEditor = ({
         </div>
         <div className="flex-grow mx-2 h-px bg-gray-700"></div>
         <div 
-          className={`flex items-center ${editorPhase === 'animation' ? 'text-blue-500' : 'text-gray-500'}`}
-          onClick={() => selectedClip.animated ? setEditorPhase('animation') : null}
+          className={`flex items-center ${editorPhase === 'animation' ? 'text-blue-500' : 'text-gray-500'} ${isAnimating || isGenerating || !selectedClip.animated ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+          onClick={() => (!isAnimating && !isGenerating && selectedClip.animated) ? setEditorPhase('animation') : null}
         >
           <div className={`w-6 h-6 rounded-full flex items-center justify-center ${editorPhase === 'animation' ? 'bg-blue-500 text-white' : 'bg-gray-700 text-gray-400'}`}>
             3
@@ -489,114 +756,7 @@ const ClipEditor = ({
         </div>
       </div>
 
-      <div className="flex border-b border-gray-700 mb-4">
-        <button
-          className={`py-2 px-4 text-sm font-medium ${activeTab === 'content' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-gray-400'}`}
-          onClick={() => setActiveTab('content')}
-        >
-          Content
-        </button>
-        <button
-          className={`py-2 px-4 text-sm font-medium ${activeTab === 'timing' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-gray-400'}`}
-          onClick={() => setActiveTab('timing')}
-        >
-          Timing
-        </button>
-        <button
-          className={`py-2 px-4 text-sm font-medium ${activeTab === 'effects' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-gray-400'}`}
-          onClick={() => setActiveTab('effects')}
-        >
-          Effects
-        </button>
-      </div>
-
-      {activeTab === 'content' && (
-        <>
-          {editorPhase === 'setup' && renderSetupPhase()}
-          {editorPhase === 'image' && renderImagePhase()}
-          {editorPhase === 'animation' && renderAnimationPhase()}
-        </>
-      )}
-
-      {activeTab === 'timing' && (
-        <div>
-          <h3 className="text-lg font-semibold text-white mb-3">Clip Timing</h3>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-gray-400 text-sm mb-1">Start Time (seconds)</label>
-              <input
-                type="number"
-                min="0"
-                step="0.1"
-                value={selectedClip.startTime}
-                onChange={(e) => updateClipTiming(parseFloat(e.target.value), selectedClip.endTime)}
-                className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2"
-              />
-            </div>
-            <div>
-              <label className="block text-gray-400 text-sm mb-1">End Time (seconds)</label>
-              <input
-                type="number"
-                min={selectedClip.startTime + 0.1}
-                step="0.1"
-                value={selectedClip.endTime}
-                onChange={(e) => updateClipTiming(selectedClip.startTime, parseFloat(e.target.value))}
-                className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2"
-              />
-            </div>
-            <div>
-              <label className="block text-gray-400 text-sm mb-1">Duration: {(selectedClip.endTime - selectedClip.startTime).toFixed(1)} seconds</label>
-              <div className="h-2 bg-gray-700 rounded-full mt-2">
-                <div 
-                  className="h-2 bg-blue-600 rounded-full"
-                  style={{ width: `${Math.min(100, ((selectedClip.endTime - selectedClip.startTime) / 10) * 100)}%` }}
-                ></div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'effects' && (
-        <div>
-          <h3 className="text-lg font-semibold text-white mb-3">Clip Effects</h3>
-          <div className="grid grid-cols-2 gap-3">
-            <button className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm">
-              Fade In
-            </button>
-            <button className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm">
-              Fade Out
-            </button>
-            <button className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm">
-              Zoom In
-            </button>
-            <button className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm">
-              Zoom Out
-            </button>
-            <button className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm">
-              Pan Left
-            </button>
-            <button className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm">
-              Pan Right
-            </button>
-          </div>
-          
-          <div className="mt-6">
-            <h3 className="text-lg font-semibold text-white mb-3">Filters</h3>
-            <div className="grid grid-cols-3 gap-2">
-              {['None', 'Blur', 'Sepia', 'Grayscale', 'Bright', 'Dark'].map(filter => (
-                <button 
-                  key={filter} 
-                  className={`px-2 py-1 ${selectedClip.filter === filter.toLowerCase() ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'} text-white rounded text-sm`}
-                  onClick={() => updateClipProperty('filter', filter.toLowerCase())}
-                >
-                  {filter}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
+      {renderContent()}
     </div>
   );
 };

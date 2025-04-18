@@ -12,6 +12,7 @@ import LoginPage from './pages/LoginPage';
 import AnimeCreatorPage from './pages/AnimeCreatorPage';
 import MangaCreatorPage from './pages/MangaCreatorPage';
 import AccountSettings from './pages/AccountSettings';
+import VideoTestPage from './pages/VideoTestPage';
 import { BubbleDemo } from './components';
 import { AuthProvider } from './context/AuthContext';
 
@@ -37,6 +38,7 @@ function App() {
               <Route path="/anime-studio" element={<AnimeCreatorPage />} />
               <Route path="/account-settings" element={<AccountSettings />} />
               <Route path="/bubble-demo" element={<BubbleDemo />} />
+              <Route path="/video-test" element={<VideoTestPage />} />
             </Routes>
           </main>
           <Footer />
