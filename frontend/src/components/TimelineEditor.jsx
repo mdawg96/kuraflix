@@ -253,71 +253,93 @@ const TimelineEditor = ({
     }
   };
   
-  // Handle end of dragging
-  const endDrag = (e) => {
-    if (!dragState || !dragState.isDragging || !videoTrackRef.current) return;
+  // Add helper function to enforce 2-minute limit
+  const enforce2MinuteLimit = (clip) => {
+    const MAX_DURATION = 120; // 2 minutes (120 seconds)
     
-    // Clear position guide
+    // Check if the clip exceeds the 2-minute mark
+    if (clip.endTime > MAX_DURATION) {
+      console.log(`Clip ${clip.id} exceeds 2-minute limit, truncating...`);
+      
+      // Create a copy of the clip with endTime capped at 120 seconds
+      const truncatedClip = {
+        ...clip,
+        endTime: MAX_DURATION,
+        duration: Math.min(clip.duration, MAX_DURATION - clip.startTime)
+      };
+      
+      return truncatedClip;
+    }
+    
+    return clip;
+  };
+  
+  // Enforce 2-minute limit on all clips in the current scene
+  useEffect(() => {
+    if (!scenes || !scenes[currentScene] || !scenes[currentScene].clips || !Array.isArray(scenes[currentScene].clips)) {
+      return;
+    }
+    
+    // Check if any clips exceed the 2-minute limit
+    let clipsModified = false;
+    const updatedClips = scenes[currentScene].clips.map(clip => {
+      const updatedClip = enforce2MinuteLimit(clip);
+      if (updatedClip !== clip) {
+        clipsModified = true;
+      }
+      return updatedClip;
+    });
+    
+    // If any clips were modified, update the scene
+    if (clipsModified && onUpdateClip) {
+      updatedClips.forEach(clip => {
+        onUpdateClip(clip);
+      });
+      toast.info("Some clips were truncated to fit the 2-minute limit", {
+        duration: 3000,
+        position: "bottom-center"
+      });
+    }
+  }, [scenes, currentScene, onUpdateClip]);
+  
+  // Modify the endDrag function to enforce the 2-minute limit
+  const endDrag = (e) => {
+    if (!dragState || !dragState.isDragging) return;
+    
+    // Clean up event listeners
+    document.removeEventListener('mousemove', handleDrag);
+    document.removeEventListener('mouseup', endDrag);
+    
+    // Reset the style of the document
+    document.body.classList.remove('timeline-dragging');
+    
+    // Extract the dragged clip with the new positions
+    const draggedClip = {
+      ...dragState.clip,
+      startTime: Math.max(0, dragState.clip.startTime),
+      endTime: dragState.clip.endTime
+    };
+    
+    // Apply 2-minute limit to the dragged clip
+    const limitedClip = enforce2MinuteLimit(draggedClip);
+    
+    // Update the clip in the scene
+    if (onUpdateClip && (draggedClip.startTime !== dragState.originalStart || 
+                         limitedClip.endTime !== dragState.originalEnd)) {
+      console.log(`Updating clip ${draggedClip.id} position:`, 
+                 `${dragState.originalStart}-${dragState.originalEnd} → ${limitedClip.startTime}-${limitedClip.endTime}`);
+      onUpdateClip(limitedClip);
+    }
+    
+    // Reset drag state
+    setDragState(null);
+    setDraggedClip(null);
     setPositionGuide(null);
     
     // Clear any auto-scroll interval
     if (autoScrollInterval) {
       clearInterval(autoScrollInterval);
       setAutoScrollInterval(null);
-    }
-    
-    try {
-      // Get the clip element
-      const clipElement = document.getElementById(`clip-${dragState.clip.id}`);
-      if (!clipElement) {
-        setDragState(null);
-        return;
-      }
-      
-      // Reset clip appearance
-      clipElement.style.zIndex = '10';
-      clipElement.style.opacity = '1';
-      clipElement.style.boxShadow = 'none';
-      
-      // Get final position from the dragState that was updated during drag
-      const duration = dragState.clip.endTime - dragState.clip.startTime;
-      const newStartTime = dragState.currentStartTime || 0;
-      
-      console.log(`Completing drag: ${dragState.originalStart} -> ${newStartTime}`);
-      
-      // Create updated clip
-      const updatedClip = {
-        ...dragState.clip,
-        startTime: newStartTime,
-        endTime: newStartTime + duration
-      };
-      
-      // Clear the left style property to let the calculated marginLeft take effect
-      clipElement.style.left = '';
-      
-      // Reposition all clips - include visual, video and animated clips
-      const visualVideoClips = clips.filter(c => c.type === 'video' || c.type === 'visual' || c.animated);
-      
-      // Sort by start time and reposition to avoid gaps
-      const finalClips = repositionClips(visualVideoClips, updatedClip);
-      
-      // If we have an update function, use it
-      if (typeof onUpdateClip === 'function') {
-        finalClips.forEach(clip => {
-          console.log(`Updating clip ${clip.id}: ${clip.startTime}-${clip.endTime}`);
-          onUpdateClip(clip);
-        });
-      }
-    } catch (err) {
-      console.error("Error during drag completion:", err);
-    } finally {
-      // Clean up event listeners
-      document.removeEventListener('mousemove', handleDrag);
-      document.removeEventListener('mouseup', endDrag);
-      document.body.classList.remove('timeline-dragging');
-      
-      // Reset state
-      setDragState(null);
     }
   };
   
