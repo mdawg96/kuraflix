@@ -712,41 +712,80 @@ const TimelineEditor = ({
             // Add debugging listeners
             audioRef.current.addEventListener('error', (e) => {
               console.error('Audio error:', e);
+              setPlaybackError(true);
             });
             
             audioRef.current.addEventListener('canplay', () => {
               console.log('Jamendo audio ready to play');
+              setPlaybackError(false);
             });
+
+            // Preload setting for better buffering
+            audioRef.current.preload = "auto";
           }
           
           try {
             // Update source if needed
             if (audioRef.current.src !== soundUrl) {
+              console.log("Setting new audio source:", soundUrl);
+              
+              // Pause and reset any existing playback
+              audioRef.current.pause();
+              
+              // Set source and force preload
               audioRef.current.src = soundUrl;
-              audioRef.current.load(); // Force reload
-            }
-            
-            // Set position within the clip
-            const relativePosition = Math.max(0, currentTime - clip.startTime);
-            audioRef.current.currentTime = relativePosition;
-            
-            // Play or pause based on state
-            if (isPlaying) {
-              // Ensure audio is ready before playing
+              audioRef.current.load(); // Force reload and buffer
+              
+              // Set a longer buffer timeout to ensure audio is ready
               setTimeout(() => {
-                if (audioRef.current.readyState >= 2) {
+                // Set position within the clip
+                const relativePosition = Math.max(0, currentTime - clip.startTime);
+                audioRef.current.currentTime = relativePosition;
+                
+                // Play if needed
+                if (isPlaying && audioRef.current.readyState >= 2) {
+                  audioRef.current.volume = 0.5; // Set volume to match preview
                   audioRef.current.play().catch(error => {
                     console.error("Error playing Jamendo audio:", error);
                     toast.error("Could not play audio");
+                    setPlaybackError(true);
                   });
                 }
-              }, 100);
+              }, 500); // Longer wait to ensure proper buffering
             } else {
-              audioRef.current.pause();
+              // Same source, just update position and play state
+              
+              // Set position within the clip
+              const relativePosition = Math.max(0, currentTime - clip.startTime);
+              audioRef.current.currentTime = relativePosition;
+              
+              // Play or pause based on state
+              if (isPlaying) {
+                if (audioRef.current.paused) {
+                  audioRef.current.volume = 0.5;
+                  audioRef.current.play().catch(error => {
+                    console.error("Error resuming Jamendo audio:", error);
+                    setPlaybackError(true);
+                  });
+                }
+              } else {
+                audioRef.current.pause();
+              }
             }
           } catch (error) {
             console.error("Audio playback error:", error);
             toast.error("Audio playback error");
+            setPlaybackError(true);
+            
+            // Log detailed information about the clip to help debugging
+            console.error("Problem clip details:", {
+              clipId: clip.id,
+              clipType: clip.type,
+              soundUrl: soundUrl,
+              allProps: Object.keys(clip),
+              audioReadyState: audioRef.current?.readyState,
+              audioNetworkState: audioRef.current?.networkState
+            });
           }
         } else {
           console.error("Sound clip has no URL:", clip);
