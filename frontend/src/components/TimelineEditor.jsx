@@ -58,6 +58,11 @@ const TimelineEditor = ({
   // Add state for playback error
   const [playbackError, setPlaybackError] = useState(false);
   
+  // Add state for resize operation
+  const [resizeState, setResizeState] = useState(null);
+  const [isResizing, setIsResizing] = useState(false);
+  const RESIZE_HANDLE_WIDTH = 10; // Width in pixels for the resize handle area
+  
   console.log('TimelineEditor - Props check:');
   console.log('- scenes:', scenes);
   console.log('- currentScene:', currentScene);
@@ -852,6 +857,188 @@ const TimelineEditor = ({
     };
   }, [currentClip, isPlaying, currentTime]);
   
+  // Start resizing a clip
+  const startResize = (e, clip, edge) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Clear any existing drag or resize operations
+    if (dragState) {
+      document.removeEventListener('mousemove', handleDrag);
+      document.removeEventListener('mouseup', endDrag);
+    }
+    
+    console.log(`Starting resize for clip ${clip.id}, edge: ${edge}`);
+    
+    // Get track container for position calculations
+    const trackRect = videoTrackRef.current.getBoundingClientRect();
+    const trackContainer = videoTrackRef.current.closest('.overflow-x-auto');
+    const scrollLeft = trackContainer ? trackContainer.scrollLeft : 0;
+    
+    // Initialize resize state
+    setResizeState({
+      clip,
+      edge, // 'start' or 'end'
+      originalStart: clip.startTime,
+      originalEnd: clip.endTime,
+      originalDuration: clip.endTime - clip.startTime,
+      trackContainer,
+      isResizing: true
+    });
+    
+    setIsResizing(true);
+    
+    // Add event listeners for resize operation
+    document.addEventListener('mousemove', handleResize);
+    document.addEventListener('mouseup', endResize);
+    
+    // Add a class to the body to indicate resizing
+    document.body.classList.add('timeline-resizing');
+  };
+  
+  // Handle resize operation
+  const handleResize = (e) => {
+    if (!resizeState || !resizeState.isResizing || !videoTrackRef.current) return;
+    
+    // Calculate mouse position relative to track
+    const trackRect = videoTrackRef.current.getBoundingClientRect();
+    const trackContainer = resizeState.trackContainer;
+    const scrollLeft = trackContainer ? trackContainer.scrollLeft : 0;
+    const mouseX = e.clientX - trackRect.left + scrollLeft;
+    
+    // Convert mouse position to time
+    const newTime = mouseX / (100 * zoomLevel);
+    
+    // Update clip based on which edge is being resized
+    const clip = { ...resizeState.clip };
+    
+    if (resizeState.edge === 'start') {
+      // Resizing the start (left edge)
+      const newStartTime = Math.max(0, Math.min(newTime, resizeState.originalEnd - 1)); // Ensure at least 1 second duration
+      clip.startTime = newStartTime;
+      clip.duration = clip.endTime - clip.startTime;
+    } else {
+      // Resizing the end (right edge)
+      const MAX_DURATION = 120; // 2 minutes (120 seconds)
+      const newEndTime = Math.min(MAX_DURATION, Math.max(resizeState.originalStart + 1, newTime));
+      clip.endTime = newEndTime;
+      clip.duration = clip.endTime - clip.startTime;
+    }
+    
+    // Update position guide to show current time
+    setPositionGuide({
+      position: resizeState.edge === 'start' ? clip.startTime * 100 * zoomLevel : clip.endTime * 100 * zoomLevel,
+      time: resizeState.edge === 'start' ? clip.startTime : clip.endTime,
+      isSnapped: false
+    });
+    
+    // Update clipElement style to show resize preview
+    const clipElement = document.getElementById(`clip-${clip.id}`);
+    if (clipElement) {
+      if (resizeState.edge === 'start') {
+        const newWidth = (clip.endTime - clip.startTime) * 100 * zoomLevel;
+        const newLeft = clip.startTime * 100 * zoomLevel;
+        clipElement.style.width = `${newWidth}px`;
+        clipElement.style.marginLeft = `${newLeft}px`;
+      } else {
+        const newWidth = (clip.endTime - clip.startTime) * 100 * zoomLevel;
+        clipElement.style.width = `${newWidth}px`;
+      }
+    }
+  };
+  
+  // End resize operation
+  const endResize = (e) => {
+    if (!resizeState || !resizeState.isResizing) return;
+    
+    // Clean up event listeners
+    document.removeEventListener('mousemove', handleResize);
+    document.removeEventListener('mouseup', endResize);
+    
+    // Reset the style of the document
+    document.body.classList.remove('timeline-resizing');
+    
+    // Extract the resized clip
+    const resizedClip = {
+      ...resizeState.clip,
+      startTime: Math.max(0, resizeState.clip.startTime),
+      endTime: resizeState.clip.endTime,
+      duration: resizeState.clip.endTime - resizeState.clip.startTime
+    };
+    
+    // Apply 2-minute limit to the resized clip
+    const limitedClip = enforce2MinuteLimit(resizedClip);
+    
+    // Update the clip in the scene
+    if (onUpdateClip && 
+       (limitedClip.startTime !== resizeState.originalStart || 
+        limitedClip.endTime !== resizeState.originalEnd)) {
+      console.log(`Updating clip ${limitedClip.id} size:`, 
+                 `${resizeState.originalStart}-${resizeState.originalEnd} → ${limitedClip.startTime}-${limitedClip.endTime}`);
+      onUpdateClip(limitedClip);
+    }
+    
+    // Reset resize state
+    setResizeState(null);
+    setIsResizing(false);
+    setPositionGuide(null);
+  };
+  
+  // Determine cursor type based on mouse position within a clip
+  const getClipCursor = (e, clipElement) => {
+    if (!clipElement) return 'move';
+    
+    const rect = clipElement.getBoundingClientRect();
+    const mouseX = e.clientX;
+    
+    // Check if mouse is near left or right edge
+    if (mouseX - rect.left < RESIZE_HANDLE_WIDTH) {
+      return 'w-resize'; // Left edge - resize start
+    } else if (rect.right - mouseX < RESIZE_HANDLE_WIDTH) {
+      return 'e-resize'; // Right edge - resize end
+    } else {
+      return 'move'; // Middle - drag to move
+    }
+  };
+  
+  // Handle mousedown on clip - determine if dragging or resizing
+  const handleClipMouseDown = (e, clip, clipIndex) => {
+    e.preventDefault();
+    
+    const clipElement = e.currentTarget;
+    const cursor = getClipCursor(e, clipElement);
+    
+    if (cursor === 'w-resize') {
+      // Resize from start (left edge)
+      startResize(e, clip, 'start');
+    } else if (cursor === 'e-resize') {
+      // Resize from end (right edge)
+      startResize(e, clip, 'end');
+    } else {
+      // Regular drag
+      startDrag(e, clip, clipIndex);
+    }
+  };
+  
+  // Handle mousemove on clip to update cursor
+  const handleClipMouseMove = (e) => {
+    const clipElement = e.currentTarget;
+    const cursor = getClipCursor(e, clipElement);
+    clipElement.style.cursor = cursor;
+  };
+
+  // Clean up event listeners on unmount
+  useEffect(() => {
+    return () => {
+      document.removeEventListener('mousemove', handleDrag);
+      document.removeEventListener('mouseup', endDrag);
+      document.removeEventListener('mousemove', handleResize);
+      document.removeEventListener('mouseup', endResize);
+      document.body.classList.remove('timeline-dragging');
+      document.body.classList.remove('timeline-resizing');
+    };
+  }, [handleDrag, handleResize]);
+  
   return (
     <div className="max-w-[95vw] mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="flex justify-between items-center mb-8">
@@ -1312,7 +1499,7 @@ const TimelineEditor = ({
                                   : clip.type === 'visual'
                                   ? 'bg-green-800'
                                   : 'bg-blue-800'
-                              } flex flex-col overflow-hidden cursor-move relative ${
+                              } flex flex-col overflow-hidden relative ${
                                 dragState?.clip?.id === clip.id && dragState.isDragging ? 'opacity-70' : ''
                               }`}
                               style={{
@@ -1342,7 +1529,8 @@ const TimelineEditor = ({
                                   onOpenClipEditor && onOpenClipEditor(clipIndex);
                                 }
                               }}
-                              onMouseDown={(e) => startDrag(e, clip, clipIndex)}
+                              onMouseMove={handleClipMouseMove}
+                              onMouseDown={(e) => handleClipMouseDown(e, clip, clipIndex)}
                             >
                               {/* Clip thumbnail */}
                               {(clip.image || clip.animationUrl) && (
@@ -1432,7 +1620,7 @@ const TimelineEditor = ({
                               id={`clip-${clip.id}`}
                               className={`h-full bg-purple-800 hover:bg-purple-700 rounded-lg ${
                                 selectedClip?.id === clip.id ? 'ring-2 ring-white' : ''
-                              } flex items-center justify-center cursor-move relative overflow-hidden`}
+                              } flex items-center justify-center relative overflow-hidden`}
                               style={{
                                 width: `${(clip.endTime - clip.startTime) * 100 * zoomLevel}px`,
                                 marginLeft: `${clip.startTime * 100 * zoomLevel}px`,
@@ -1448,7 +1636,8 @@ const TimelineEditor = ({
                                   onOpenClipEditor(clipIndex);
                                 }
                               }}
-                              onMouseDown={(e) => startDrag(e, clip, clipIndex)}
+                              onMouseMove={handleClipMouseMove}
+                              onMouseDown={(e) => handleClipMouseDown(e, clip, clipIndex)}
                             >
                               <div className="p-1 h-full flex items-center overflow-hidden w-full">
                                 <div className="text-white text-xs truncate w-full flex items-center">
@@ -1500,7 +1689,8 @@ const TimelineEditor = ({
                                   onOpenClipEditor(clipIndex);
                                 }
                               }}
-                              onMouseDown={(e) => startDrag(e, clip, clipIndex)}
+                              onMouseMove={handleClipMouseMove}
+                              onMouseDown={(e) => handleClipMouseDown(e, clip, clipIndex)}
                             >
                               <div className="p-1 h-full flex items-center overflow-hidden">
                                 <span className="text-white text-xs truncate">
