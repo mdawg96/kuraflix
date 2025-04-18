@@ -1171,17 +1171,17 @@ const TimelineEditor = ({
               <div className="flex">
                 {/* Track labels column - fixed position */}
                 <div className="flex-shrink-0 mr-2" style={{ width: '80px' }}>
-                  <div className="h-6 flex items-end">
+                  <div className="h-6 flex items-end justify-center mb-1">
                     <span className="text-gray-500 text-xs">Time</span>
                   </div>
-                  <div className="h-16 flex items-center">
-                    <span className="text-white text-xs">Video</span>
+                  <div className="h-16 flex items-center justify-center mb-2">
+                    <span className="text-white text-xs font-medium">Video</span>
                   </div>
-                  <div className="h-10 flex items-center">
-                    <span className="text-white text-xs">Sound</span>
+                  <div className="h-10 flex items-center justify-center mb-2">
+                    <span className="text-white text-xs font-medium">Sound</span>
                   </div>
-                  <div className="h-10 flex items-center">
-                    <span className="text-white text-xs">Narration</span>
+                  <div className="h-10 flex items-center justify-center">
+                    <span className="text-white text-xs font-medium">Narration</span>
                   </div>
                 </div>
                 
