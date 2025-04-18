@@ -1180,6 +1180,9 @@ const TimelineEditor = ({
                   <div className="h-10 flex items-center">
                     <span className="text-white text-xs">Sound</span>
                   </div>
+                  <div className="h-10 flex items-center">
+                    <span className="text-white text-xs">Narration</span>
+                  </div>
                 </div>
                 
                 {/* Timeline tracks with content */}
