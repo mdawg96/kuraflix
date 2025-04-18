@@ -12,7 +12,7 @@ const JAMENDO_GENRES = [
 ];
 
 // Update the API client ID to a potentially more valid one
-const JAMENDO_CLIENT_ID = "61d86397";
+const JAMENDO_CLIENT_ID = "3e2f6382";
 
 // Add local Jamendo tracks as a safety fallback
 const LOCAL_JAMENDO_TRACKS = [
