@@ -286,6 +286,13 @@ const SoundSelector = ({ onAddSound, onClose }) => {
       return;
     }
 
+    // Stop any playing audio before closing
+    if (previewAudio) {
+      previewAudio.pause();
+      previewAudio.src = '';
+      setIsPlaying(false);
+    }
+
     const finalDuration = showCustomDuration ? customDuration : selectedTrack.duration;
     
     // Call the parent component's onAddSound function
@@ -362,13 +369,24 @@ const SoundSelector = ({ onAddSound, onClose }) => {
     };
   }, [customTracks]);
 
+  // Handle the close action
+  const handleClose = () => {
+    // Stop any playing audio before closing
+    if (previewAudio) {
+      previewAudio.pause();
+      previewAudio.src = '';
+      setIsPlaying(false);
+    }
+    onClose();
+  };
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 overflow-y-auto p-4">
       <div className="bg-gray-800 rounded-lg p-6 w-full max-w-4xl my-4 flex flex-col max-h-[85vh] overflow-hidden">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-bold text-white">Add Background Music</h2>
           <button 
-            onClick={onClose}
+            onClick={handleClose}
             className="text-gray-400 hover:text-white transition-colors"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -558,7 +576,7 @@ const SoundSelector = ({ onAddSound, onClose }) => {
         {/* Action buttons */}
         <div className="flex justify-end space-x-2">
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded"
           >
             Cancel
