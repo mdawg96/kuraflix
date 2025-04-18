@@ -234,13 +234,32 @@ const SoundSelector = ({ onAddSound, onClose }) => {
     // Set the selected track first
     setSelectedTrack(track);
     
+    // Show loading state
+    toast.loading("Loading audio...", { id: "audio-loading" });
+    
     // Create new audio for preview
     const audio = new Audio();
     
+    // Configure for optimal loading
+    audio.preload = "auto";
+    
+    // Track loading timeout
+    let loadingTimeout = setTimeout(() => {
+      toast.error("Audio loading timeout. Try another track.", { id: "audio-loading" });
+      if (audio) {
+        audio.pause();
+        audio.src = '';
+      }
+      setIsPlaying(false);
+    }, 5000);
+    
     // Set up event listeners before setting the source
-    audio.addEventListener('canplay', () => {
+    audio.addEventListener('canplaythrough', () => {
+      clearTimeout(loadingTimeout);
       console.log("Audio ready to play:", track.title);
-      // Only play when canplay event fires to ensure audio is ready
+      toast.success("Audio loaded", { id: "audio-loading" });
+      
+      // Only play when canplaythrough event fires to ensure audio is ready
       try {
         audio.play()
           .then(() => {
@@ -248,7 +267,7 @@ const SoundSelector = ({ onAddSound, onClose }) => {
           })
           .catch(error => {
             console.error("Error playing audio:", error);
-            toast.error("Could not play preview");
+            toast.error("Could not play preview", { id: "audio-loading" });
             setIsPlaying(false);
           });
       } catch (e) {
@@ -258,9 +277,23 @@ const SoundSelector = ({ onAddSound, onClose }) => {
     });
     
     audio.addEventListener('error', (e) => {
+      clearTimeout(loadingTimeout);
       console.error("Audio loading error:", e);
-      toast.error("Could not load audio");
+      toast.error("Could not load audio. Try another track.", { id: "audio-loading" });
       setIsPlaying(false);
+    });
+    
+    // Abort loading if it takes too long
+    audio.addEventListener('loadstart', () => {
+      console.log("Audio loading started for:", track.title);
+    });
+    
+    audio.addEventListener('progress', (e) => {
+      // Log buffering progress
+      if (audio.buffered.length > 0) {
+        const percentLoaded = (audio.buffered.end(audio.buffered.length - 1) / audio.duration) * 100;
+        console.log(`Audio buffering: ${Math.round(percentLoaded)}%`);
+      }
     });
     
     // Set the source after adding event listeners
