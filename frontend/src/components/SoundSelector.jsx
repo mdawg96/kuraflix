@@ -14,42 +14,6 @@ const JAMENDO_GENRES = [
 // Jamendo API client ID - Replace with your own from https://devportal.jamendo.com/
 const JAMENDO_CLIENT_ID = "2c455128";
 
-// Replace NASA tracks with Jamendo fallback tracks
-const FALLBACK_TRACKS = {
-  cinematic: [
-    { id: "fallback-cin-1", title: "Epic Cinematic", url: "https://mp3d.jamendo.com/download/track/1884527/mp32", duration: 163, artist: "Alexander Nakarada" },
-    { id: "fallback-cin-2", title: "Dreaming of Venus", url: "https://mp3d.jamendo.com/download/track/1219760/mp32", duration: 177, artist: "Borrtex" },
-    { id: "fallback-cin-3", title: "Abandoned Castle", url: "https://mp3d.jamendo.com/download/track/1315710/mp32", duration: 165, artist: "Borrtex" }
-  ],
-  electronic: [
-    { id: "fallback-elec-1", title: "Electronic Future", url: "https://mp3d.jamendo.com/download/track/1349290/mp32", duration: 182, artist: "Alex Nekita" },
-    { id: "fallback-elec-2", title: "Digital Matrix", url: "https://mp3d.jamendo.com/download/track/1407964/mp32", duration: 183, artist: "Smartsound" },
-    { id: "fallback-elec-3", title: "Future Tech", url: "https://mp3d.jamendo.com/download/track/1396960/mp32", duration: 146, artist: "Jamendo Music" }
-  ],
-  jazz: [
-    { id: "fallback-jazz-1", title: "Jazz Cafe", url: "https://mp3d.jamendo.com/download/track/1101146/mp32", duration: 160, artist: "Bluemillenium" },
-    { id: "fallback-jazz-2", title: "Smooth Jazz", url: "https://mp3d.jamendo.com/download/track/1359401/mp32", duration: 195, artist: "Jamendo Music" },
-    { id: "fallback-jazz-3", title: "Jazz Piano", url: "https://mp3d.jamendo.com/download/track/1225340/mp32", duration: 141, artist: "Jamendo Music" }
-  ],
-  ambient: [
-    { id: "fallback-amb-1", title: "Distant Lands", url: "https://mp3d.jamendo.com/download/track/1219978/mp32", duration: 194, artist: "Borrtex" },
-    { id: "fallback-amb-2", title: "Dawn", url: "https://mp3d.jamendo.com/download/track/1219500/mp32", duration: 127, artist: "Borrtex" },
-    { id: "fallback-amb-3", title: "Ambient World", url: "https://mp3d.jamendo.com/download/track/1285062/mp32", duration: 150, artist: "Jamendo Music" }
-  ],
-  upbeat: [
-    { id: "fallback-upb-1", title: "Happy Day", url: "https://mp3d.jamendo.com/download/track/1238201/mp32", duration: 138, artist: "Jamendo Music" },
-    { id: "fallback-upb-2", title: "Uplifting", url: "https://mp3d.jamendo.com/download/track/1397960/mp32", duration: 142, artist: "Beat Mekanik" },
-    { id: "fallback-upb-3", title: "Positive Energy", url: "https://mp3d.jamendo.com/download/track/1326347/mp32", duration: 125, artist: "Jamendo Music" }
-  ],
-  all: [
-    { id: "fallback-all-1", title: "Epic Cinematic", url: "https://mp3d.jamendo.com/download/track/1884527/mp32", duration: 163, artist: "Alexander Nakarada" },
-    { id: "fallback-all-2", title: "Electronic Future", url: "https://mp3d.jamendo.com/download/track/1349290/mp32", duration: 182, artist: "Alex Nekita" },
-    { id: "fallback-all-3", title: "Jazz Cafe", url: "https://mp3d.jamendo.com/download/track/1101146/mp32", duration: 160, artist: "Bluemillenium" },
-    { id: "fallback-all-4", title: "Distant Lands", url: "https://mp3d.jamendo.com/download/track/1219978/mp32", duration: 194, artist: "Borrtex" },
-    { id: "fallback-all-5", title: "Happy Day", url: "https://mp3d.jamendo.com/download/track/1238201/mp32", duration: 138, artist: "Jamendo Music" }
-  ]
-};
-
 const SoundSelector = ({ onAddSound, onClose }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTrack, setSelectedTrack] = useState(null);
@@ -73,24 +37,20 @@ const SoundSelector = ({ onAddSound, onClose }) => {
     setIsLoading(true);
     
     try {
-      // Force using fallbacks for now since Jamendo API has issues
-      throw new Error('Using fallbacks temporarily');
-      
+      // Use the Jamendo API to get tracks by genre
       const genreInfo = JAMENDO_GENRES.find(g => g.id === genre);
       const tags = genreInfo ? genreInfo.tags : '';
       
       const apiUrl = `https://api.jamendo.com/v3.0/tracks/?client_id=${JAMENDO_CLIENT_ID}&format=json&limit=10&include=musicinfo&tags=${tags}`;
-      console.log("Fetching genre tracks from:", apiUrl);
+      console.log("Fetching Jamendo tracks for genre:", genre);
       
       const response = await fetch(apiUrl);
-      console.log("API response status:", response.status);
       
       if (!response.ok) {
-        throw new Error(`API request failed: ${response.status}`);
+        throw new Error(`Jamendo API request failed: ${response.status}`);
       }
       
       const data = await response.json();
-      console.log("API returned data:", data);
       
       if (data.results && data.results.length > 0) {
         // Format tracks to match our component's expected structure
@@ -104,7 +64,7 @@ const SoundSelector = ({ onAddSound, onClose }) => {
           license: track.license_ccurl
         }));
         
-        console.log(`Found ${formattedTracks.length} tracks for genre "${genre}"`);
+        console.log(`Found ${formattedTracks.length} Jamendo tracks for genre "${genre}"`);
         
         // Update the tracks for this genre
         setGenreTracks(prev => ({
@@ -112,28 +72,18 @@ const SoundSelector = ({ onAddSound, onClose }) => {
           [genre]: formattedTracks
         }));
       } else {
-        console.warn(`No tracks returned from API for genre "${genre}"`);
-        throw new Error('No tracks found');
+        console.warn(`No tracks returned from Jamendo API for genre "${genre}"`);
+        throw new Error('No tracks found in Jamendo API response');
       }
     } catch (error) {
-      console.error("Using fallback tracks instead of Jamendo API:", error);
+      console.error("Error fetching from Jamendo API:", error);
+      toast.error(`Could not load tracks from Jamendo: ${error.message}`);
       
-      // Use fallback tracks instead
-      console.log(`Using ${FALLBACK_TRACKS[genre]?.length || 0} fallback tracks for "${genre}"`);
+      // If API fails, set empty array for this genre
       setGenreTracks(prev => ({
         ...prev,
-        [genre]: FALLBACK_TRACKS[genre] || []
+        [genre]: []
       }));
-      
-      if (FALLBACK_TRACKS[genre]?.length > 0) {
-        // Don't show toast every time to avoid spam
-        if (!window.shownFallbackToast) {
-          toast.info("Using Jamendo fallback tracks - API connection issue");
-          window.shownFallbackToast = true;
-        }
-      } else {
-        toast.error("Could not load tracks");
-      }
     } finally {
       setIsLoading(false);
     }
@@ -144,22 +94,17 @@ const SoundSelector = ({ onAddSound, onClose }) => {
     setIsLoading(true);
     
     try {
-      // Force using fallbacks for now since Jamendo API has issues
-      throw new Error('Using fallbacks temporarily');
-      
-      // Fetch popular tracks for the initial view
+      // Fetch popular tracks from Jamendo API
       const apiUrl = `https://api.jamendo.com/v3.0/tracks/?client_id=${JAMENDO_CLIENT_ID}&format=json&limit=30&include=musicinfo&boost=popularity`;
-      console.log("Fetching all tracks from:", apiUrl);
+      console.log("Fetching popular Jamendo tracks");
       
       const response = await fetch(apiUrl);
-      console.log("API response status:", response.status);
       
       if (!response.ok) {
-        throw new Error(`API request failed: ${response.status}`);
+        throw new Error(`Jamendo API request failed: ${response.status}`);
       }
       
       const data = await response.json();
-      console.log("API returned data:", data);
       
       if (data.results && data.results.length > 0) {
         // Format tracks to match our component's expected structure
@@ -173,7 +118,7 @@ const SoundSelector = ({ onAddSound, onClose }) => {
           license: track.license_ccurl
         }));
         
-        console.log(`Found ${formattedTracks.length} tracks for "all" category`);
+        console.log(`Found ${formattedTracks.length} popular Jamendo tracks`);
         
         // Update the tracks for the "all" category
         setGenreTracks(prev => ({
@@ -181,28 +126,18 @@ const SoundSelector = ({ onAddSound, onClose }) => {
           all: formattedTracks
         }));
       } else {
-        console.warn("No tracks returned from API for 'all' category");
-        throw new Error('No tracks found');
+        console.warn("No tracks returned from Jamendo API for 'all' category");
+        throw new Error('No tracks found in Jamendo API response');
       }
     } catch (error) {
-      console.error("Using fallback tracks instead of Jamendo API:", error);
+      console.error("Error fetching from Jamendo API:", error);
+      toast.error(`Could not load tracks from Jamendo: ${error.message}`);
       
-      // Use fallback tracks instead
-      console.log(`Using ${FALLBACK_TRACKS.all?.length || 0} fallback tracks for "all"`);
+      // If API fails, set empty array
       setGenreTracks(prev => ({
         ...prev,
-        all: FALLBACK_TRACKS.all || []
+        all: []
       }));
-      
-      if (FALLBACK_TRACKS.all?.length > 0) {
-        // Don't show toast every time to avoid spam
-        if (!window.shownFallbackToast) {
-          toast.info("Using Jamendo fallback tracks - API connection issue");
-          window.shownFallbackToast = true;
-        }
-      } else {
-        toast.error("Could not load tracks");
-      }
     } finally {
       setIsLoading(false);
     }
@@ -259,30 +194,67 @@ const SoundSelector = ({ onAddSound, onClose }) => {
   };
 
   // Preview the selected track
-  const togglePreview = (track) => {
+  const togglePreview = async (track) => {
+    // If currently playing this track, pause it
     if (isPlaying && previewAudio && selectedTrack?.id === track.id) {
-      previewAudio.pause();
-      setIsPlaying(false);
+      try {
+        previewAudio.pause();
+        setIsPlaying(false);
+      } catch (e) {
+        console.error("Error pausing audio:", e);
+      }
       return;
     }
 
-    // Stop any currently playing audio first
+    // Safely stop any currently playing audio first
     if (previewAudio) {
-      previewAudio.pause();
+      try {
+        previewAudio.pause();
+        previewAudio.src = '';
+      } catch (e) {
+        console.error("Error stopping previous audio:", e);
+      }
     }
 
-    // Create new audio for preview
-    const audio = new Audio(track.url);
-    audio.volume = 0.5;
-    setPreviewAudio(audio);
+    // Set the selected track first
+    setSelectedTrack(track);
     
-    audio.play().then(() => {
-      setIsPlaying(true);
-      setSelectedTrack(track);
-    }).catch(error => {
-      console.error("Error playing audio:", error);
-      toast.error("Could not play preview");
+    // Create new audio for preview
+    const audio = new Audio();
+    
+    // Set up event listeners before setting the source
+    audio.addEventListener('canplay', () => {
+      console.log("Audio ready to play:", track.title);
+      // Only play when canplay event fires to ensure audio is ready
+      try {
+        audio.play()
+          .then(() => {
+            setIsPlaying(true);
+          })
+          .catch(error => {
+            console.error("Error playing audio:", error);
+            toast.error("Could not play preview");
+            setIsPlaying(false);
+          });
+      } catch (e) {
+        console.error("Exception during play:", e);
+        setIsPlaying(false);
+      }
     });
+    
+    audio.addEventListener('error', (e) => {
+      console.error("Audio loading error:", e);
+      toast.error("Could not load audio");
+      setIsPlaying(false);
+    });
+    
+    // Set the source after adding event listeners
+    audio.src = track.url;
+    audio.volume = 0.5;
+    audio.load(); // Explicitly call load to start loading the audio
+    
+    // Store the audio element for future reference
+    setPreviewAudio(audio);
   };
 
   // Format time as mm:ss
@@ -564,8 +536,8 @@ const SoundSelector = ({ onAddSound, onClose }) => {
 
         {/* Library disclaimer */}
         <div className="mb-4 p-3 bg-blue-900 bg-opacity-30 rounded-md text-sm text-blue-200">
-          <p>Currently using NASA Audio Library (Public Domain) as fallback. 
-             All tracks are royalty-free and CORS-friendly. Custom uploaded tracks must comply with applicable copyright laws.</p>
+          <p>Using Jamendo API for royalty-free music. All tracks are licensed under Creative Commons 
+             and can be used in your projects with proper attribution. Custom uploaded tracks must comply with applicable copyright laws.</p>
         </div>
 
         {/* Action buttons */}
