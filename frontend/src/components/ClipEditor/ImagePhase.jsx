@@ -122,7 +122,11 @@ const ImagePhase = ({
     console.log(`Adding static image to timeline with duration: ${finalDuration}s`);
 
     // Create a unique ID for this static clip to prevent duplicates
-    const uniqueId = `static-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    const timestamp = Date.now();
+    const randomSuffix = Math.random().toString(36).substring(2, 9);
+    const uniqueId = `static-${timestamp}-${randomSuffix}`;
+    
+    console.log(`Generated unique static image ID: ${uniqueId}`);
 
     // Update the clip properties for a static image
     const updatedClip = {
@@ -132,8 +136,7 @@ const ImagePhase = ({
       duration: finalDuration,
       animated: false,
       aspectRatio: "9:16", // Explicitly set aspect ratio
-      // Mark as confirmed (not a draft) so it gets added to the timeline
-      draft: false,
+      draft: false, // Explicitly set draft to false so it gets added to the timeline
       // Add timeline positioning properties needed by the timeline
       startTime: 0, // The parent component will position it appropriately
       endTime: finalDuration, // Just set initial duration - parent will reposition

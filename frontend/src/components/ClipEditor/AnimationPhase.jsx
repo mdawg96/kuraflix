@@ -331,149 +331,47 @@ const AnimationPhase = ({
 
   // Update clip with trim values
   const confirmTrimming = () => {
-    if (onUpdateClip && selectedClip) {
-      // Calculate the duration based on trim values
-      const trimmedDuration = trimEnd - trimStart;
-      
-      // Enforce maximum duration of MAX_DURATION seconds
-      if (trimmedDuration > MAX_DURATION) {
-        toast.error(`Maximum clip duration is ${MAX_DURATION} seconds. Please adjust your trim.`);
-        return;
-      }
-      
-      // Verify the animation URL is valid first
-      let finalAnimationUrl = selectedClip.animationUrl || processedUrl;
-      if (!finalAnimationUrl) {
-        toast.error('No valid animation URL found. Cannot add to timeline.');
-        return;
-      }
-      
-      // Log the URL being used for debugging
-      console.log('Adding to timeline with original URL:', finalAnimationUrl);
-      
-      // Clean any cache busting parameters
-      const cleanUrl = finalAnimationUrl.replace(/[?&]cb=\d+/, '');
-      
-      // Ensure the URL is fully qualified with the API base URL
-      const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5001';
-      let fullQualifiedUrl = cleanUrl;
-      
-      // If it's not already a full URL, add the API base URL
-      if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
-        // If it starts with slash, append to base URL, otherwise add slash + path
-        if (cleanUrl.startsWith('/')) {
-          fullQualifiedUrl = `${apiBaseUrl}${cleanUrl}`;
-        } else if (cleanUrl.startsWith('outputs/')) {
-          fullQualifiedUrl = `${apiBaseUrl}/${cleanUrl}`;
-        } else if (cleanUrl.match(/^animation_[0-9]+\.mp4$/)) {
-          // Handle the case where it's just a filename
-          fullQualifiedUrl = `${apiBaseUrl}/outputs/${cleanUrl}`;
-        } else {
-          fullQualifiedUrl = `${apiBaseUrl}/${cleanUrl}`;
-        }
-      }
-      
-      console.log('Full qualified URL for timeline:', fullQualifiedUrl);
-      
-      // Debug: Test the URL with a fetch call
-      fetch(fullQualifiedUrl, { method: 'HEAD' })
-        .then(response => {
-          console.log(`URL test result: ${response.status} ${response.statusText}`);
-        })
-        .catch(err => {
-          console.error('URL test error:', err);
-        });
-      
-      // Get a frame from the video to use as a preview image
-      let previewImage = null;
-      if (selectedClip.image) {
-        previewImage = selectedClip.image;
-      } else {
-        // Use the animation URL with a frame timestamp
-        previewImage = fullQualifiedUrl + '#t=0.1';
-      }
-      
-      // Prepare the updated clip with trim values
-      const updatedClip = {
-        ...selectedClip,
-        trimStart,
-        trimEnd,
-        animationDuration: trimmedDuration,
-        // Use the fully qualified URL
-        animationUrl: fullQualifiedUrl,
-        // Mark the clip as video type for the timeline
-        type: 'video',
-        // Position it correctly in the timeline based on last video's end time
-        // Note: the startTime and endTime will be used for timeline positioning
-        // This will be handled by the parent component (AnimeCreatorPage)
-        // which knows the positions of other clips
-        animated: true,
-        // Set a flag that this is a newly confirmed animation - this is the important flag!
-        confirmedAnimation: true,
-        // Remove any draft status since this is ready to go to the timeline
-        draft: false,
-        // Ensure this clip can be properly sequenced in the timeline
-        readyForTimeline: true,
-        // Include a preview image for the timeline
-        image: previewImage
-      };
-      
-      console.log('Confirming animation trim with duration:', trimmedDuration);
-      console.log('Updated clip for timeline:', updatedClip);
-      
-      // Store the animation URL in the global cache to ensure it can be retrieved later
-      if (!window.clipAnimationUrls) {
-        window.clipAnimationUrls = {};
-      }
-      window.clipAnimationUrls[selectedClip.id] = fullQualifiedUrl;
-      
-      // Store in localStorage
-      try {
-        localStorage.setItem('lastAnimationUrl', fullQualifiedUrl);
-        localStorage.setItem('lastClipId', selectedClip.id);
-        console.log('Stored animation URL in localStorage for retrieval');
-      } catch (err) {
-        console.error('Failed to save URL to localStorage:', err);
-      }
-      
-      // Apply changes to the clip
-      onUpdateClip(updatedClip);
-      
-      // Close the editor after confirming
-      toast.success('Animation added to timeline!');
-      
-      // Check if window.closeEditor exists as a function (preferred method)
-      if (typeof window.closeEditor === 'function') {
-        console.log("Calling window.closeEditor to close editor completely");
-        setTimeout(() => window.closeEditor(), 300); // Add small delay to ensure state updates
-      } else {
-        // If no window.closeEditor, use setEditorPhase to go back to setup
-        console.log("No window.closeEditor found, using setEditorPhase to exit");
-        // Go back to setup phase first to avoid bugs
-        setEditorPhase('setup');
-        
-        // Then try to find and close the editor dialog if it exists
-        setTimeout(() => {
-          try {
-            // Try to find and close modal by clicking close button
-            const closeButton = document.querySelector('.clip-editor-close-button');
-            if (closeButton) {
-              console.log("Found close button, clicking it");
-              closeButton.click();
-            } else {
-              // If no close button, try to find the modal overlay and click it
-              const modalOverlay = document.querySelector('.clip-editor-modal-overlay');
-              if (modalOverlay) {
-                console.log("Found modal overlay, clicking it to close");
-                modalOverlay.click();
-              }
-            }
-          } catch (err) {
-            console.error("Error trying to close editor:", err);
-          }
-        }, 300);
-      }
+    if (!videoRef.current) {
+      console.error("Video reference not available");
+      return;
     }
+    
+    // Get current trim values
+    const trimStart = currentTrimStart !== null ? currentTrimStart : defaultTrimStart;
+    const trimEnd = currentTrimEnd !== null ? currentTrimEnd : defaultTrimEnd;
+    
+    // Calculate duration
+    const duration = trimEnd - trimStart;
+    console.log(`Animation duration after trimming: ${duration.toFixed(2)}s`);
+    
+    if (duration < 0.5) {
+      toast.error("Animation must be at least 0.5 seconds long");
+      return;
+    }
+    
+    // Update the clip with trim values and other required properties
+    const updatedClip = {
+      ...selectedClip,
+      trimStart,
+      trimEnd,
+      animationDuration: duration,
+      // Add explicit flags to indicate this is ready for the timeline
+      confirmedAnimation: true,
+      draft: false, // Explicitly mark as not a draft to add to timeline
+      type: 'video',  // Explicitly set as video type for the timeline
+      animated: true, // Mark as animated for the timeline
+    };
+    
+    // Apply the update through the parent component
+    onUpdateClip(updatedClip);
+    
+    // Give feedback to the user
+    toast.success(`Animation trimmed and added to timeline (${duration.toFixed(1)}s)`);
+    
+    // Reset the trimming UI
+    setIsTrimming(false);
+    setCurrentTrimStart(null);
+    setCurrentTrimEnd(null);
   };
 
   // Play/pause toggle

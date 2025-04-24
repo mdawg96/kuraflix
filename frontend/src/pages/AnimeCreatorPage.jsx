@@ -8,6 +8,7 @@ import { toast } from 'react-hot-toast';
 import { firestoreService } from '../services/firestoreService';
 import NarrationEditor from '../components/NarrationEditor';
 import SoundSelector from '../components/SoundSelector';
+import { v4 as uuidv4 } from 'uuid';
 
 const AnimeCreatorPage = () => {
   const navigate = useNavigate();
@@ -77,48 +78,32 @@ const AnimeCreatorPage = () => {
   
   // Check URL params on component mount and when popstate fires
   useEffect(() => {
-    // Parse the URL to check for view parameter
-    const params = new URLSearchParams(window.location.search);
-    const view = params.get('view');
-    const projectId = params.get('projectId');
+    // Parse URL parameters
+    const urlParams = new URLSearchParams(location.search);
+    const view = urlParams.get('view');
+    const projectId = urlParams.get('projectId');
     
-    // Load character data regardless of view - do this first
-    loadCharacters();
-    
+    // Handle routing based on URL parameters
     if (view === 'editor') {
-      setShowProjectSelector(false);
-      
-      // If we have a project ID and it's not 'new', try to find and load the project
-      if (projectId && projectId !== 'new') {
-        const project = projectList.find(p => p.id.toString() === projectId);
-        if (project) {
-          setStoryTitle(project.title);
-          setAuthor(project.author);
+      if (projectId === 'new') {
+        // Auto-create a new project
+        createNewProject();
+      } else if (projectId) {
+        // Try to load the specific project
+        const projectToLoad = projectList.find(p => p.id === projectId);
+        if (projectToLoad) {
+          loadProject(projectToLoad);
+        } else {
+          // Project not found, show project selector
+          toast.error("Project not found");
+          setShowProjectSelector(true);
         }
       }
     } else {
+      // Default view is project selector
       setShowProjectSelector(true);
     }
-    
-    // Add popstate event listener to handle browser back/forward buttons
-    const handlePopState = () => {
-      const params = new URLSearchParams(window.location.search);
-      const view = params.get('view');
-      
-      if (view === 'editor') {
-        setShowProjectSelector(false);
-      } else {
-        setShowProjectSelector(true);
-      }
-    };
-    
-    window.addEventListener('popstate', handlePopState);
-    
-    // Clean up
-    return () => {
-      window.removeEventListener('popstate', handlePopState);
-    };
-  }, [projectList]);
+  }, [location.search, projectList]);
   
   // Load character data
   const loadCharacters = async () => {
@@ -216,22 +201,32 @@ const AnimeCreatorPage = () => {
     }
     
     setShowProjectSelector(false);
+    
+    // Update URL to reflect loaded project
+    navigate(`/anime-studio?view=editor&projectId=${project.id}`, { replace: true });
   };
   
   // Create a new project and proceed to editor
-  const createNewProject = async () => {
-    console.log("Creating new project");
+  const createNewProject = async (title = 'New Project', author = 'Anonymous') => {
+    console.log('Creating new project');
     
-    // Create default scene
-    const defaultScene = createDefaultScene();
-    
-    // Create new project object
+    // Create a default scene
+    const defaultScene = {
+      id: uuidv4(),
+      name: "Scene 1",
+      duration: 5,
+      clips: [],
+    };
+
+    // Create a new project with the provided title and author
     const newProject = {
-      title: "New Animation",
+      id: uuidv4(),
+      title: title,
+      author: author,
       description: "",
       scenes: [defaultScene],
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
     };
     
     try {
@@ -250,6 +245,9 @@ const AnimeCreatorPage = () => {
         
         // Show success message
         toast.success("New project created successfully!");
+        
+        // Update URL to reflect new project
+        navigate(`/anime-studio?view=editor&projectId=${savedProject.id}`, { replace: true });
       } else {
         console.error("Failed to create project:", response.error);
         toast.error("Failed to create new project. Please try again.");
@@ -291,37 +289,39 @@ const AnimeCreatorPage = () => {
   
   // Function to autosave the current project
   const saveProject = async () => {
-    if (!currentProject) return;
-    
+    // Create updated project object with current state
+    // Use default values if fields are empty
     const updatedProject = {
       ...currentProject,
-      title: storyTitle,
-      author,
-      scenes,
-      lastEdited: new Date().toISOString()
+      title: storyTitle || "Untitled Project",
+      author: author || "Anonymous",
+      description: description || "",
+      lastModified: new Date().toISOString(),
+      scenes: scenes
     };
     
-    console.log("Auto-saving project:", updatedProject.id);
-    
     try {
-      const response = await firestoreService.updateAnimeProject(currentProject.id, updatedProject);
+      // Add a more visible saving indicator
+      const toastId = toast.loading("Saving project...");
       
-      if (response.success) {
-        console.log("Project saved successfully");
-        setCurrentProject(updatedProject);
-        
-        // Also update the project in projectList
-        setProjectList(prev => 
-          prev.map(p => p.id === currentProject.id ? updatedProject : p)
+      // Save to Firestore
+      // Use updateAnimeProject instead of updateProject and pass projectId and project data
+      await firestoreService.updateAnimeProject(updatedProject.id, updatedProject);
+      
+      // Update local project list
+      setProjectList(prevProjects => {
+        return prevProjects.map(p => 
+          p.id === updatedProject.id ? updatedProject : p
         );
-      } else {
-        console.error("Failed to save project:", response.error);
-        // Fallback to localStorage
-        saveToLocalStorage(updatedProject);
-      }
+      });
+      
+      // Update toast with success message
+      toast.success('Project saved successfully!', { id: toastId, duration: 3000 });
     } catch (error) {
-      console.error("Error saving project:", error);
-      // Fallback to localStorage
+      console.error("Error saving to Firestore:", error);
+      toast.error("Couldn't save to cloud. Saving locally instead.");
+      
+      // Fallback to localStorage on Firestore error
       saveToLocalStorage(updatedProject);
     }
   };
@@ -476,7 +476,7 @@ const AnimeCreatorPage = () => {
     }
     
     // Update the URL and go back to projects view
-    window.history.pushState({}, '', '?view=projects');
+    navigate(`/anime-studio`, { replace: true });
     setShowProjectSelector(true);
   };
   
@@ -496,7 +496,41 @@ const AnimeCreatorPage = () => {
     }
   };
   
-  // Handle clip click to open editor
+  // Add a new function to delete a clip by ID
+  const deleteClip = (clipId) => {
+    if (!clipId) {
+      console.error("Cannot delete clip: No clip ID provided");
+      return;
+    }
+
+    console.log(`Deleting clip with ID: ${clipId}`);
+    
+    // Update the scenes state
+    setScenes(prevScenes => {
+      // Create a deep copy of the scenes array
+      const newScenes = [...prevScenes];
+      
+      // Get the current scene
+      const scene = { ...newScenes[currentScene] };
+      
+      // Filter out the clip with the given ID
+      scene.clips = scene.clips.filter(clip => clip.id !== clipId);
+      
+      // Update the scene in the new scenes array
+      newScenes[currentScene] = scene;
+      
+      return newScenes;
+    });
+    
+    // If the deleted clip was selected, clear the selection
+    if (selectedClip && selectedClip.id === clipId) {
+      setSelectedClip(null);
+    }
+    
+    toast.success("Clip deleted successfully");
+  };
+  
+  // Enhance the handleClipClick function
   const handleClipClick = (clipIndex) => {
     console.log(`Clip clicked at index ${clipIndex}`);
     
@@ -550,337 +584,92 @@ const AnimeCreatorPage = () => {
     };
   }, []);
   
-  // Update the updateClip function to properly handle static clips
-  const updateClip = useCallback((updatedClip) => {
+  // Function to update a clip (whether in timeline or draft)
+  const updateClip = (updatedClip) => {
     console.log("Updating clip:", updatedClip);
     
-    // Special handling for narration clips
-    if (updatedClip.type === 'narration' && updatedClip.hasNarration) {
-      console.log("Handling narration clip update:", updatedClip);
+    // If this is a new clip or draft being finalized
+    if (updatedClip.draft === false) {
+      console.log("This is a draft clip being added to timeline");
       
-      setScenes(prevScenes => {
-        const newScenes = [...prevScenes];
-        const scene = newScenes[currentScene];
-        
-        if (!scene || !Array.isArray(scene.clips)) {
-          console.error("Invalid scene structure:", scene);
-          return prevScenes;
-        }
-        
-        // Find the clip that needs updating
-        const clipIndex = scene.clips.findIndex(clip => clip.id === updatedClip.id);
-        
-        // Check for duplicates with the same ID
-        const duplicateIndex = clipIndex === -1 ? -1 : 
-          scene.clips.findIndex((clip, idx) => 
-            clip.id === updatedClip.id && idx !== clipIndex
-          );
-          
-        if (duplicateIndex !== -1) {
-          console.warn(`Found duplicate narration clip with ID ${updatedClip.id}, removing duplicate`);
-          // Remove the duplicate
-          scene.clips.splice(duplicateIndex, 1);
-        }
-        
-        if (clipIndex === -1) {
-          console.error(`Narration clip with ID ${updatedClip.id} not found in scene`);
-          return prevScenes;
-        }
-        
-        // Preserve the original startTime from the scene
-        const originalStartTime = scene.clips[clipIndex].startTime;
-        
-        // Make sure duration is honored for narration
-        const duration = updatedClip.narrationDuration || (updatedClip.endTime - updatedClip.startTime);
-        
-        // Update the clip with the correct positioning
-        const positionedClip = {
-          ...updatedClip,
-          startTime: originalStartTime,
-          endTime: originalStartTime + duration
-        };
-        
-        console.log("Updated narration clip position:", {
-          startTime: positionedClip.startTime,
-          endTime: positionedClip.endTime,
-          duration: duration
+      // Log additional info for static images
+      if (updatedClip.type === 'static') {
+        console.log("Processing static image to add to timeline", {
+          id: updatedClip.id,
+          duration: updatedClip.duration,
+          hasImage: !!updatedClip.image
         });
-        
-        // Update the clip in the scene
-        scene.clips[clipIndex] = positionedClip;
-        
-        return newScenes;
-      });
-      
-      // Update the selected clip
-      setSelectedClip(updatedClip);
-      
-      return; // Exit early as we've handled the update
-    }
-    
-    // Special handling for static clips being added to the timeline
-    if (updatedClip.type === 'static' && updatedClip.draft === false) {
-      console.log("Adding static clip to timeline:", updatedClip);
-      
-      // Check if this is a new static clip based on ID pattern
-      const isNewStaticClip = updatedClip.id.startsWith('static-');
-      
-      // Make sure we have a valid duration
-      const duration = updatedClip.duration || 3; // Default to 3 seconds if missing
-      console.log(`Static clip duration: ${duration}s`);
-      
-      // Check if we already have a clip with this ID to prevent duplicates
-      setScenes(prevScenes => {
-        const newScenes = [...prevScenes];
-        const scene = { ...newScenes[currentScene] };
-        
-        // Check for an existing clip with the same ID (to prevent duplicates)
-        const existingClipIndex = scene.clips.findIndex(clip => clip.id === updatedClip.id);
-        if (existingClipIndex !== -1 && isNewStaticClip) {
-          console.log(`Static clip with ID ${updatedClip.id} already exists - skipping addition`);
-          return prevScenes; // Return without adding duplicate
-        }
-        
-        // Find where to position this clip in the timeline
-        let startTime = 0;
-        
-        // Find the end time of the last clip
-        scene.clips.forEach(clip => {
-          if (clip.endTime > startTime) {
-            startTime = clip.endTime;
-          }
-        });
-        
-        // Position the new static clip at the end of the timeline
-        const positionedClip = {
-          ...updatedClip,
-          startTime: startTime,
-          endTime: startTime + duration
-        };
-        
-        console.log("Final positioned static clip:", {
-          id: positionedClip.id,
-          startTime: positionedClip.startTime,
-          endTime: positionedClip.endTime,
-          duration: positionedClip.duration,
-          type: positionedClip.type
-        });
-        
-        // Add the clip to the scene
-        scene.clips.push(positionedClip);
-        newScenes[currentScene] = scene;
-        
-        return newScenes;
-      });
-      
-      // Close the clip editor 
-      setShowClipEditor(false);
-      return;
-    }
-    
-    // Special handling for newly confirmed animations
-    if (updatedClip.confirmedAnimation) {
-      console.log("Detected confirmedAnimation flag - handling animated clip");
-      console.log("Detailed clip data:", updatedClip);
-      
-      // Validate URL format first
-      if (updatedClip.animationUrl) {
-        try {
-          // If URL is valid, log it
-          console.log("Animation URL validation:", new URL(updatedClip.animationUrl));
-        } catch (e) {
-          console.error("Invalid animation URL format:", updatedClip.animationUrl, e);
-          // Don't try to fix URL here - it should be fixed in ClipEditor/AnimationPhase
-        }
       }
       
+      // Add the clip to the timeline
       setScenes(prevScenes => {
-        // Create a new copy of the scenes
         const newScenes = [...prevScenes];
-        const scene = newScenes[currentScene];
+        const currentSceneObj = {...newScenes[currentScene]};
         
-        if (!scene || !Array.isArray(scene.clips)) {
-          console.error("Invalid scene structure:", scene);
-          return prevScenes;
-        }
-        
-        // Find the clip that needs updating
-        const clipIndex = scene.clips.findIndex(clip => clip.id === updatedClip.id);
-        
-        if (clipIndex === -1) {
-          // This is a new clip that needs to be added to the scene
-          console.log(`Clip with ID ${updatedClip.id} not found in scene - adding new clip`);
-          
-          // Find the last clip that ends before this one starts
-          // to determine where to place this clip in the timeline
+        // Check if a clip with this ID already exists to prevent duplicates
+        const existingClipIndex = currentSceneObj.clips.findIndex(clip => clip.id === updatedClip.id);
+        if (existingClipIndex !== -1) {
+          console.warn(`Clip with ID ${updatedClip.id} already exists in the timeline, updating instead`);
+          const updatedClips = [...currentSceneObj.clips];
+          updatedClips[existingClipIndex] = updatedClip;
+          currentSceneObj.clips = updatedClips;
+        } else {
+          // Find where to position this clip in the timeline
           let startTime = 0;
           
-          // Find the end time of the last video clip
-          scene.clips.forEach(clip => {
-            if (clip.id !== updatedClip.id && clip.endTime > startTime) {
-              startTime = clip.endTime;
-            }
-          });
+          // Only find the end time of the last clip if there are existing clips
+          if (currentSceneObj.clips && currentSceneObj.clips.length > 0) {
+            // Find the end time of the last clip
+            currentSceneObj.clips.forEach(clip => {
+              if (clip.endTime > startTime) {
+                startTime = clip.endTime;
+              }
+            });
+          }
           
-          // Calculate the duration from the trim values
-          const duration = updatedClip.trimEnd - updatedClip.trimStart;
+          // For static images, always position at the end of timeline
+          // This fixes the issue where static images were showing startTime=0
+          const isStaticImage = updatedClip.type === 'static';
           
-          // Update the clip with position information
-          const positionedClip = {
+          if (isStaticImage) {
+            console.log(`Positioning static image clip at startTime=${startTime}`);
+          } else {
+            console.log(`Positioning ${updatedClip.type} clip at startTime=${startTime}`);
+          }
+          
+          // Position this clip at the end of the timeline
+          const finalClip = {
             ...updatedClip,
             startTime: startTime,
-            endTime: startTime + duration,
-            // These properties are essential for timeline display:
-            type: 'video',  // Explicitly set as video type
-            animated: true, // Mark as animated
-            // Use the first frame of animation as the preview image if no image exists
-            image: updatedClip.image || (updatedClip.animationUrl ? updatedClip.animationUrl + '#t=0.1' : null),
-            // Remove the confirmation flag as it's been handled
-            confirmedAnimation: undefined,
-            // No longer a draft
-            draft: false
+            endTime: startTime + (updatedClip.duration || 3) // Use specified duration or default
           };
+          
+          // For static images, log the final positioning
+          if (isStaticImage) {
+            console.log("Final static image position:", {
+              id: finalClip.id,
+              startTime: finalClip.startTime,
+              endTime: finalClip.endTime,
+              duration: finalClip.endTime - finalClip.startTime
+            });
+          }
           
           // Add the clip to the scene
-          scene.clips.push(positionedClip);
-          
-          console.log("Added new animation clip to timeline:", {
-            clip: positionedClip,
-            startTime,
-            endTime: startTime + duration,
-            duration
-          });
-          
-          return newScenes;
-        } else {
-          // Existing clip - update its position and properties
-          
-          // Find the last clip that ends before this one starts
-          // to determine where to place this clip in the timeline
-          let startTime = 0;
-          
-          // Find the end time of the last video clip
-          scene.clips.forEach(clip => {
-            if (clip.id !== updatedClip.id && clip.endTime > startTime) {
-              startTime = clip.endTime;
-            }
-          });
-          
-          // Calculate the duration from the trim values
-          const duration = updatedClip.trimEnd - updatedClip.trimStart;
-          
-          // Update the clip with position information
-          const positionedClip = {
-            ...updatedClip,
-            startTime: startTime,
-            endTime: startTime + duration,
-            // These properties are essential for timeline display:
-            type: 'video',  // Explicitly set as video type
-            animated: true, // Mark as animated
-            // Use the first frame of animation as the preview image if no image exists
-            image: updatedClip.image || (updatedClip.animationUrl ? updatedClip.animationUrl + '#t=0.1' : null),
-            // Remove the confirmation flag as it's been handled
-            confirmedAnimation: undefined,
-            // No longer a draft
-            draft: false
-          };
-          
-          // Update the clip in the scene
-          scene.clips[clipIndex] = positionedClip;
-          
-          console.log("Positioned animation clip in timeline:", {
-            clip: positionedClip,
-            startTime,
-            endTime: startTime + duration,
-            duration,
-            type: positionedClip.type,
-            hasImage: !!positionedClip.image,
-            animationUrl: positionedClip.animationUrl
-          });
-          
-          return newScenes;
+          currentSceneObj.clips.push(finalClip);
         }
+        
+        newScenes[currentScene] = currentSceneObj;
+        return newScenes;
       });
       
-      // Update selected clip
+      // Close the editors after adding to timeline
+      setShowClipEditor(false);
+      setShowNarrationEditor(false);
+    } else {
+      // Just update the selected clip without adding to timeline
       setSelectedClip(updatedClip);
-      
-      // Close the editor after confirming the animation
-      setTimeout(() => {
-        console.log("Animation confirmed, closing editor");
-        setShowClipEditor(false);
-      }, 300); // Added longer delay to ensure state updates propagate
-      
-      return; // Exit early as we've handled the update
     }
-    
-    // For clips that are not yet confirmed/added to timeline (drafts or image-only updates)
-    // Just update the selectedClip without touching the scenes array
-    if (updatedClip.draft || (!updatedClip.animated && !updatedClip.confirmedAnimation)) {
-      console.log("Updating draft clip or image-only update - not adding to timeline yet");
-      setSelectedClip(updatedClip);
-      return;
-    }
-    
-    // For regular clip updates that are already in the timeline
-    // This handles clips that are already in the timeline and need updates
-    setScenes(prevScenes => {
-      // Find the clip with this ID
-      const clipIndex = prevScenes[currentScene].clips.findIndex(clip => clip.id === updatedClip.id);
-      
-      if (clipIndex === -1) {
-        console.log("Clip not found in current scene - might be a draft clip");
-        return prevScenes;
-      }
-      
-      const oldClip = prevScenes[currentScene].clips[clipIndex];
-      
-      // Use a more efficient comparison for clips
-      // Added animated properties to comparison
-      const hasChanges = oldClip.id !== updatedClip.id ||
-                        oldClip.image !== updatedClip.image ||
-                        JSON.stringify(oldClip.characters) !== JSON.stringify(updatedClip.characters) ||
-                        oldClip.environment !== updatedClip.environment ||
-                        oldClip.action !== updatedClip.action ||
-                        oldClip.style !== updatedClip.style ||
-                        oldClip.startTime !== updatedClip.startTime ||
-                        oldClip.endTime !== updatedClip.endTime ||
-                        oldClip.animated !== updatedClip.animated ||
-                        oldClip.trimStart !== updatedClip.trimStart ||
-                        oldClip.trimEnd !== updatedClip.trimEnd ||
-                        oldClip.animationUrl !== updatedClip.animationUrl ||
-                        oldClip.animationDuration !== updatedClip.animationDuration;
-      
-      if (!hasChanges) {
-        console.log("Clip data unchanged, skipping scenes update");
-        return prevScenes; // Return existing reference if nothing changed
-      }
-      
-      // Only create a new scenes array if we need to update
-      const newScenes = [...prevScenes];
-      
-      // If the clip is animated but doesn't have a type set, make sure it's marked as 'video'
-      if (updatedClip.animated && updatedClip.animationUrl && !updatedClip.type) {
-        updatedClip.type = 'video';
-      }
-      
-      // Apply the update
-      newScenes[currentScene].clips[clipIndex] = updatedClip;
-      
-      // Log for debugging
-      console.log("Updated clip in scene:", {
-        clipId: updatedClip.id,
-        isAnimated: updatedClip.animated,
-        hasAnimationUrl: !!updatedClip.animationUrl,
-        type: updatedClip.type
-      });
-      
-      return newScenes;
-    });
-    
-    // Always update the selected clip
-    setSelectedClip(updatedClip);
-  }, [currentScene, scenes]);
+  };
   
   // Set transition between scenes
   const setTransition = (transitionType) => {
@@ -906,6 +695,12 @@ const AnimeCreatorPage = () => {
       return;
     }
     
+    // Ensure characters are loaded before opening clip editor
+    if (allCharacters.length === 0) {
+      console.log("No characters loaded, loading characters first");
+      loadCharacters();
+    }
+    
     // Create a new clip object for other types
     const newClip = {
       id: newClipId,
@@ -916,76 +711,31 @@ const AnimeCreatorPage = () => {
       characters: [],
       environment: '',
       action: '',
-      style: 'anime'
+      style: 'anime',
+      draft: true // Mark as draft so it doesn't get added to timeline until explicitly requested
     };
     
-    // Handle different clip types
-    if (clipType === 'video') {
-      // For video clips, mark as draft until animation is confirmed
-      // This means they won't be added to the timeline yet
-      newClip.draft = true;
-      
-      // Just set it as the selected clip for editing
-      setSelectedClip(newClip);
-      
-      // Open the clip editor
-      console.log("Opening clip editor for new draft video clip");
-      setTimeout(() => {
-        setShowClipEditor(true);
-        setShowNarrationEditor(false);
-      }, 50);
-    } 
-    else if (clipType === 'narration') {
+    // Add type-specific properties
+    if (clipType === 'narration') {
       // For narration clips, set specific properties
       newClip.narrationText = ''; // Text of the narration
       newClip.narrationVoice = 'alloy'; // Voice for text-to-speech
       newClip.narrationSpeed = 1; // Default speed
       newClip.narrationUrl = null; // URL to generated audio
       newClip.hasNarration = false; // Flag to indicate if narration has been generated
-      
-      // Add the narration clip to the timeline right away
-      setScenes(prevScenes => {
-        const newScenes = [...prevScenes];
-        const currentSceneObj = {...newScenes[currentScene]};
-        
-        // Check if a clip with this ID already exists to prevent duplicates
-        const existingClipIndex = currentSceneObj.clips.findIndex(clip => clip.id === newClip.id);
-        if (existingClipIndex !== -1) {
-          console.warn(`Clip with ID ${newClip.id} already exists in the timeline, not adding duplicate`);
-          return prevScenes;
-        }
-        
-        // Find where to position this clip in the timeline
-        let startTime = 0;
-        
-        // Only find the end time of the last clip if there are existing clips
-        if (currentSceneObj.clips && currentSceneObj.clips.length > 0) {
-          // Find the end time of the last clip
-          currentSceneObj.clips.forEach(clip => {
-            if (clip.endTime > startTime) {
-              startTime = clip.endTime;
-            }
-          });
-        } else {
-          // If no clips exist, start at the beginning (0)
-          startTime = 0;
-        }
-        
-        console.log(`Positioning narration clip at startTime=${startTime}`);
-        
-        // Position this clip at the end of the timeline or at 0 if no clips
-        newClip.startTime = startTime;
-        newClip.endTime = startTime + 3; // Default 3 second duration
-        
-        // Add the clip to the scene
-        currentSceneObj.clips.push(newClip);
-        newScenes[currentScene] = currentSceneObj;
-        
-        return newScenes;
-      });
-      
-      // Select the clip and open the narration editor
-      setSelectedClip(newClip);
+    }
+    
+    // Set the clip as selected without adding to timeline yet
+    setSelectedClip(newClip);
+    
+    // Handle different clip types for editor display
+    if (clipType === 'video') {
+      console.log("Opening clip editor for new video clip");
+      setShowClipEditor(true);
+      setShowNarrationEditor(false);
+    } 
+    else if (clipType === 'narration') {
+      console.log("Opening narration editor for new narration clip");
       setShowNarrationEditor(true);
       setShowClipEditor(false);
     }
@@ -1377,8 +1127,8 @@ The scene should have a strong sense of narrative and emotional impact. Characte
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-xl font-bold text-white">Your Projects</h2>
             <button
-              onClick={createNewProject}
-              className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded transition-colors duration-300"
+              onClick={() => navigate('/anime-studio?view=editor&projectId=new')}
+              className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded"
             >
               Create New
             </button>
@@ -1388,60 +1138,75 @@ The scene should have a strong sense of narrative and emotional impact. Characte
             <div className="text-center py-8 bg-gray-700 rounded-lg">
               <p className="text-gray-400 mb-4">You don't have any projects yet</p>
               <button
-                onClick={createNewProject}
+                onClick={() => navigate('/anime-studio?view=editor&projectId=new')}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors duration-300"
               >
                 Create Your First Project
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {projectList.map(project => (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {projectList.map((project) => (
                 <div
                   key={project.id}
-                  className="bg-gray-700 rounded-lg overflow-hidden shadow-md hover:shadow-lg transition-shadow duration-300 cursor-pointer relative group"
+                  className="bg-gray-800 rounded-lg overflow-hidden border border-gray-700 hover:border-blue-500 transition-colors cursor-pointer relative group"
                 >
                   <div 
-                    className="aspect-video bg-gray-900 relative"
+                    className="h-48 bg-gray-900 relative" 
                     onClick={() => loadProject(project)}
                   >
-                    <img
-                      src={project.thumbnail}
-                      alt={project.title}
-                      className="w-full h-full object-cover" 
-                      onError={(e) => {
-                        e.target.onerror = null;
-                        e.target.src = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MDAiIGhlaWdodD0iNDUwIiB2aWV3Qm94PSIwIDAgODAwIDQ1MCI+PHJlY3Qgd2lkdGg9IjgwMCIgaGVpZ2h0PSI0NTAiIGZpbGw9IiMzMzMiLz48dGV4dCB4PSI0MDAiIHk9IjIyNSIgZm9udC1mYW1pbHk9IkFyaWFsIiBmb250LXNpemU9IjMwIiBmaWxsPSIjZmZmIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBhbGlnbm1lbnQtYmFzZWxpbmU9Im1pZGRsZSI+Tm8gUHJldmlldzwvdGV4dD48L3N2Zz4=';
-                      }}
-                    />
-                    <div className="absolute bottom-2 right-2 bg-black bg-opacity-75 text-white px-2 py-1 text-sm rounded">
-                      {project.duration}
-                    </div>
-                  </div>
-                  <div 
-                    className="p-4"
-                    onClick={() => loadProject(project)}
-                  >
-                    <h3 className="text-white font-semibold mb-1">{project.title}</h3>
-                    <div className="flex justify-between text-gray-400 text-sm">
-                      <span>{project.author}</span>
-                      <span>Edited {project.lastEdited}</span>
-                    </div>
+                    {/* Project thumbnail - use first scene image if available */}
+                    {project.scenes && project.scenes[0] && project.scenes[0].clips && 
+                     project.scenes[0].clips.length > 0 && project.scenes[0].clips[0].image ? (
+                      <img
+                        src={project.scenes[0].clips[0].image}
+                        alt={project.title || "Project Thumbnail"}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          e.target.src = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MDAiIGhlaWdodD0iMjgwIiB2aWV3Qm94PSIwIDAgNTAwIDI4MCI+PHJlY3Qgd2lkdGg9IjUwMCIgaGVpZ2h0PSIyODAiIGZpbGw9IiMxZTI5M2IiLz48dGV4dCB4PSIyNTAiIHk9IjE0MCIgZm9udC1mYW1pbHk9IkFyaWFsIiBmb250LXNpemU9IjM2IiBmaWxsPSIjZDFkNWRiIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBhbGlnbm1lbnQtYmFzZWxpbmU9Im1pZGRsZSI+TmV3IEFuaW1hdGlvbjwvdGV4dD48L3N2Zz4=";
+                        }}
+                      />
+                    ) : (
+                      <div className="flex items-center justify-center h-full">
+                        <svg className="w-16 h-16 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                      </div>
+                    )}
+                    
+                    {/* Delete button */}
+                    <button
+                      onClick={(e) => deleteProject(project.id, e)}
+                      className="absolute top-2 right-2 p-1 bg-red-600 hover:bg-red-700 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="Delete project"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
                   </div>
                   
-                  {/* Delete button */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteProject(project.id, e);
-                    }}
-                    className="absolute top-2 right-2 bg-red-600 hover:bg-red-700 text-white p-1.5 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-                    title="Delete Project"
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
+                  <div className="p-4" onClick={() => loadProject(project)}>
+                    <h3 className="text-white font-medium truncate">
+                      {project.title || "Untitled Project"}
+                    </h3>
+                    <p className="text-gray-400 text-sm truncate mt-1">
+                      {project.author ? `By ${project.author}` : "Anonymous"}
+                    </p>
+                    {project.description && (
+                      <p className="text-gray-500 text-xs mt-2 line-clamp-2">
+                        {project.description}
+                      </p>
+                    )}
+                    <div className="flex justify-between items-center mt-3">
+                      <span className="text-xs text-gray-500">
+                        {project.lastModified ? new Date(project.lastModified).toLocaleDateString() : "Edited"}
+                      </span>
+                      <span className="text-xs px-2 py-1 bg-gray-700 rounded-md text-gray-300">
+                        {project.scenes ? `${project.scenes.length} scene${project.scenes.length !== 1 ? 's' : ''}` : "0 scenes"}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
@@ -1453,15 +1218,30 @@ The scene should have a strong sense of narrative and emotional impact. Characte
   
   // Add state for sound selector visibility
   const [showSoundSelector, setShowSoundSelector] = useState(false);
+  const [showNewProjectModal, setShowNewProjectModal] = useState(false);
+  const [newProjectTitle, setNewProjectTitle] = useState('');
+  const [newProjectAuthor, setNewProjectAuthor] = useState('');
 
   // Add this function to handle adding sound from the selector
   const handleAddSound = (soundData) => {
     console.log("Adding sound to timeline:", soundData);
     
-    // Generate unique ID for new sound clip
+    // Generate unique ID for new sound clip - ensure it's truly unique
     const timestamp = Date.now();
     const randomId = Math.random().toString(36).substr(2, 12);
     const newClipId = `sound-${timestamp}-${randomId}`;
+    
+    // Enforce 2-minute (120 second) limit for sound clips
+    const MAX_DURATION = 120; // 2 minutes in seconds
+    const clippedDuration = Math.min(soundData.duration, MAX_DURATION);
+    
+    if (soundData.duration > MAX_DURATION) {
+      console.log(`Sound clip duration (${soundData.duration}s) exceeds 2-minute limit. Truncating to ${MAX_DURATION}s.`);
+      toast.success(`Sound clip truncated to 2-minute maximum`, {
+        duration: 3000,
+        position: "bottom-center"
+      });
+    }
     
     // Create a new sound clip with the selected track data
     const newClip = {
@@ -1470,14 +1250,34 @@ The scene should have a strong sense of narrative and emotional impact. Characte
       title: soundData.title,
       soundUrl: soundData.url,
       startTime: 0, // Will be positioned at the end of the timeline
-      duration: soundData.duration,
+      duration: clippedDuration,
       source: soundData.source
     };
     
-    // Add the sound clip to the timeline
+    // Close the sound selector modal BEFORE updating state
+    // This might solve timing issues
+    setShowSoundSelector(false);
+    
+    // Add the sound clip to the timeline - now with safeguards against duplication
     setScenes(prevScenes => {
       const newScenes = [...prevScenes];
       const currentSceneObj = {...newScenes[currentScene]};
+      
+      // Ensure clips array exists
+      if (!currentSceneObj.clips) {
+        currentSceneObj.clips = [];
+      }
+      
+      // Check if this exact clip already exists to prevent duplication
+      const clipExists = currentSceneObj.clips.some(clip => 
+        clip.id === newClipId || 
+        (clip.soundUrl === newClip.soundUrl && clip.title === newClip.title)
+      );
+      
+      if (clipExists) {
+        console.warn("Duplicate clip detected - not adding again");
+        return prevScenes; // Return unchanged scenes
+      }
       
       // Find where to position this clip in the timeline
       let startTime = 0;
@@ -1496,15 +1296,104 @@ The scene should have a strong sense of narrative and emotional impact. Characte
       
       // Position this clip at the end of the timeline
       newClip.startTime = startTime;
-      newClip.endTime = startTime + soundData.duration;
+      newClip.endTime = startTime + clippedDuration;
       
       // Add the clip to the scene
       currentSceneObj.clips.push(newClip);
       newScenes[currentScene] = currentSceneObj;
       
+      // Debug - log the updated scenes
+      console.log("Updated scenes:", JSON.stringify(newScenes));
+      
       return newScenes;
     });
+    
+    // Use a timeout to ensure the state update has time to process
+    setTimeout(() => {
+      console.log("Checking if clip was added to scenes:", 
+        scenes[currentScene]?.clips?.some(clip => clip.id === newClipId) || false);
+    }, 500);
   };
+  
+  // Project details modal component
+  const ProjectDetailsModal = () => {
+    return (
+      <div className="fixed inset-0 z-50 overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+        <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+          <div className="fixed inset-0 bg-gray-900 bg-opacity-75 transition-opacity" aria-hidden="true"></div>
+
+          <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+
+          <div className="inline-block align-bottom bg-gray-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+            <div className="bg-gray-800 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+              <div className="sm:flex sm:items-start">
+                <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left w-full">
+                  <h3 className="text-lg leading-6 font-medium text-white" id="modal-title">
+                    Create New Project
+                  </h3>
+                  <div className="mt-4 space-y-4">
+                    <div>
+                      <label htmlFor="project-title" className="block text-sm font-medium text-gray-400">
+                        Project Title
+                      </label>
+                      <input
+                        type="text"
+                        name="project-title"
+                        id="project-title"
+                        value={newProjectTitle}
+                        onChange={(e) => setNewProjectTitle(e.target.value)}
+                        className="mt-1 focus:ring-blue-500 focus:border-blue-500 block w-full bg-gray-700 border-gray-600 rounded-md text-white"
+                        placeholder="My Awesome Animation"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="project-author" className="block text-sm font-medium text-gray-400">
+                        Author
+                      </label>
+                      <input
+                        type="text"
+                        name="project-author"
+                        id="project-author"
+                        value={newProjectAuthor}
+                        onChange={(e) => setNewProjectAuthor(e.target.value)}
+                        className="mt-1 focus:ring-blue-500 focus:border-blue-500 block w-full bg-gray-700 border-gray-600 rounded-md text-white"
+                        placeholder="Your Name"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="bg-gray-900 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+              <button
+                type="button"
+                onClick={() => {
+                  // Call createNewProject with the new title and author
+                  createNewProject(newProjectTitle, newProjectAuthor);
+                  setShowNewProjectModal(false);
+                }}
+                className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:ml-3 sm:w-auto sm:text-sm"
+              >
+                Create Project
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowNewProjectModal(false)}
+                className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-600 shadow-sm px-4 py-2 bg-gray-700 text-base font-medium text-gray-300 hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+  
+  // Load characters when component mounts, regardless of showProjectSelector state
+  useEffect(() => {
+    loadCharacters();
+  }, []);
   
   // Render the main component
   return (
@@ -1533,6 +1422,8 @@ The scene should have a strong sense of narrative and emotional impact. Characte
             setDescription={setDescription}
             onBackToProjects={goBackToProjects}
             onShowPublishModal={() => setShowPublishModal(true)}
+            onDeleteClip={deleteClip}
+            onSaveProject={saveProject}
           />
           
           {showClipEditor && (
@@ -1677,6 +1568,10 @@ The scene should have a strong sense of narrative and emotional impact. Characte
               onAddSound={handleAddSound}
               onClose={() => setShowSoundSelector(false)}
             />
+          )}
+        
+          {showNewProjectModal && (
+            <ProjectDetailsModal />
           )}
         </>
       )}

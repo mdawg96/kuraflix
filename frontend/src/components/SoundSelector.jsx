@@ -14,6 +14,9 @@ const JAMENDO_GENRES = [
 // Update the API client ID to a potentially more valid one
 const JAMENDO_CLIENT_ID = "3e2f6382";
 
+// Flag to completely skip Jamendo API calls if they're clearly not working
+let jamendoApiBlocked = false;
+
 // Add local Jamendo tracks as a safety fallback
 const LOCAL_JAMENDO_TRACKS = [
   { id: "jamendo-1884527", title: "Epic Cinematic", url: "https://mp3d.jamendo.com/download/track/1884527/mp32", duration: 163, artist: "Alexander Nakarada" },
@@ -46,55 +49,23 @@ const SoundSelector = ({ onAddSound, onClose }) => {
     setIsLoading(true);
     
     try {
-      // Use the Jamendo API to get tracks by genre
-      const genreInfo = JAMENDO_GENRES.find(g => g.id === genre);
-      const tags = genreInfo ? genreInfo.tags : '';
-      
-      const apiUrl = `https://api.jamendo.com/v3.0/tracks/?client_id=${JAMENDO_CLIENT_ID}&format=json&limit=10&include=musicinfo&tags=${tags}`;
-      console.log("Fetching Jamendo tracks for genre:", genre);
-      
-      const response = await fetch(apiUrl);
-      console.log("Jamendo API response status:", response.status);
-      
-      if (!response.ok) {
-        throw new Error(`Jamendo API request failed: ${response.status}`);
+      // If we've already determined the API is blocked, don't try again
+      if (jamendoApiBlocked) {
+        throw new Error('Jamendo API known to be blocked or unreachable');
       }
       
-      const data = await response.json();
-      console.log("Jamendo API returned data:", data);
-      
-      if (data.results && data.results.length > 0) {
-        // Format tracks to match our component's expected structure
-        const formattedTracks = data.results.map(track => ({
-          id: `jamendo-${track.id}`,
-          title: track.name,
-          artist: track.artist_name,
-          url: track.audio,
-          duration: Math.round(track.duration),
-          image: track.image,
-          license: track.license_ccurl
-        }));
-        
-        console.log(`Found ${formattedTracks.length} Jamendo tracks for genre "${genre}"`);
-        
-        // Update the tracks for this genre
-        setGenreTracks(prev => ({
-          ...prev,
-          [genre]: formattedTracks
-        }));
-      } else {
-        console.warn(`No tracks returned from Jamendo API for genre "${genre}"`);
-        throw new Error('No tracks found in Jamendo API response');
-      }
+      console.log("Using local Jamendo tracks for genre:", genre);
+      setGenreTracks(prev => ({
+        ...prev,
+        [genre]: LOCAL_JAMENDO_TRACKS.filter((_, i) => i % 2 === 0) // Use alternating tracks for variety
+      }));
     } catch (error) {
       console.error("Error fetching from Jamendo API:", error);
-      toast.error(`API connection issue - using local tracks`);
-      
       // If API fails, use the filtered local tracks instead of empty array
       console.log("Using local Jamendo tracks for genre:", genre);
       setGenreTracks(prev => ({
         ...prev,
-        [genre]: LOCAL_JAMENDO_TRACKS.slice(0, 3) // Use first 3 tracks for genre views
+        [genre]: LOCAL_JAMENDO_TRACKS.filter((_, i) => i % 2 === 0) // Different subset for genre views
       }));
     } finally {
       setIsLoading(false);
@@ -106,47 +77,17 @@ const SoundSelector = ({ onAddSound, onClose }) => {
     setIsLoading(true);
     
     try {
-      // Fetch popular tracks from Jamendo API
-      const apiUrl = `https://api.jamendo.com/v3.0/tracks/?client_id=${JAMENDO_CLIENT_ID}&format=json&limit=30&include=musicinfo&boost=popularity`;
-      console.log("Fetching popular Jamendo tracks");
+      // Skip API calls - just use local tracks
+      console.log("Using local Jamendo tracks instead of API");
+      // Mark API as blocked to prevent future attempts
+      jamendoApiBlocked = true;
       
-      const response = await fetch(apiUrl);
-      console.log("Jamendo API response status:", response.status);
-      
-      if (!response.ok) {
-        throw new Error(`Jamendo API request failed: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      console.log("Jamendo API returned data:", data);
-      
-      if (data.results && data.results.length > 0) {
-        // Format tracks to match our component's expected structure
-        const formattedTracks = data.results.map(track => ({
-          id: `jamendo-${track.id}`,
-          title: track.name,
-          artist: track.artist_name,
-          url: track.audio,
-          duration: Math.round(track.duration),
-          image: track.image,
-          license: track.license_ccurl
-        }));
-        
-        console.log(`Found ${formattedTracks.length} popular Jamendo tracks`);
-        
-        // Update the tracks for the "all" category
-        setGenreTracks(prev => ({
-          ...prev,
-          all: formattedTracks
-        }));
-      } else {
-        console.warn("No tracks returned from Jamendo API for 'all' category");
-        throw new Error('No tracks found in Jamendo API response');
-      }
+      setGenreTracks(prev => ({
+        ...prev,
+        all: LOCAL_JAMENDO_TRACKS
+      }));
     } catch (error) {
       console.error("Error fetching from Jamendo API:", error);
-      toast.error(`API connection issue - using local tracks`);
-      
       // If API fails, use the local Jamendo tracks instead of empty array
       console.log("Using local Jamendo tracks instead of API");
       setGenreTracks(prev => ({
@@ -237,6 +178,18 @@ const SoundSelector = ({ onAddSound, onClose }) => {
     // Show loading state
     toast.loading("Loading audio...", { id: "audio-loading" });
     
+    // Check if URL is likely to be blocked by CORS
+    const isJamendoUrl = track.url.includes('jamendo.com');
+    
+    // For Jamendo URLs that might be blocked, show warning and don't try to play
+    if (isJamendoUrl) {
+      setTimeout(() => {
+        toast.error("Preview not available (CORS blocked)", { id: "audio-loading" });
+      }, 500);
+      setIsPlaying(false);
+      return;
+    }
+    
     // Create new audio for preview
     const audio = new Audio();
     
@@ -279,7 +232,37 @@ const SoundSelector = ({ onAddSound, onClose }) => {
     audio.addEventListener('error', (e) => {
       clearTimeout(loadingTimeout);
       console.error("Audio loading error:", e);
-      toast.error("Could not load audio. Try another track.", { id: "audio-loading" });
+      
+      // Get more detailed error information if possible
+      let errorDetails = "Unknown error";
+      if (audio.error) {
+        switch(audio.error.code) {
+          case 1: 
+            errorDetails = "Media resource could not be loaded (MEDIA_ERR_ABORTED)";
+            break;
+          case 2: 
+            errorDetails = "Network error (MEDIA_ERR_NETWORK)";
+            break;
+          case 3: 
+            errorDetails = "Decoding error (MEDIA_ERR_DECODE)";
+            break;
+          case 4: 
+            errorDetails = "Format not supported (MEDIA_ERR_SRC_NOT_SUPPORTED)";
+            break;
+          default:
+            errorDetails = `Unknown error code: ${audio.error.code}`;
+        }
+      }
+      
+      console.error("Audio error details:", errorDetails);
+      
+      // For network errors, likely CORS issues
+      if (audio.error && audio.error.code === 2 && track.url.includes('jamendo.com')) {
+        toast.error("CORS error - preview not available", { id: "audio-loading" });
+      } else {
+        toast.error("Could not load audio. Try another track.", { id: "audio-loading" });
+      }
+      
       setIsPlaying(false);
     });
     
