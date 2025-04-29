@@ -31,6 +31,27 @@ service cloud.firestore {
       allow update, delete: if isAuth() && resource.data.userId == request.auth.uid;
     }
     
+    // Add rules for mangaProjects collection
+    match /mangaProjects/{projectId} {
+      allow read: if isAuth();
+      allow create: if isAuth() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuth() && resource.data.userId == request.auth.uid;
+    }
+    
+    // Add rules for projects collection
+    match /projects/{projectId} {
+      allow read: if isAuth();
+      allow create: if isAuth() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuth() && resource.data.userId == request.auth.uid;
+    }
+    
+    // Add rules for publishedVideos collection
+    match /publishedVideos/{videoId} {
+      allow read: if isAuth();
+      allow create: if isAuth() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuth() && resource.data.userId == request.auth.uid;
+    }
+    
     // Add rules for animeProjects collection
     match /animeProjects/{projectId} {
       allow read: if isAuth() && resource.data.userId == request.auth.uid;
@@ -85,11 +106,6 @@ service cloud.firestore {
     // Public data collection
     match /publicData/{document=**} {
       allow read: if true;
-    }
-    
-    // Test collection - for debugging
-    match /test_collection/{docId} {
-      allow read, write: if true;  // Public access for testing
     }
   }
 } 

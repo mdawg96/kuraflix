@@ -1,6 +1,14 @@
 import React from 'react';
 import { Bubble } from './';
 
+// Helper function to format duration from seconds to MM:SS format
+const formatDuration = (seconds) => {
+  if (!seconds) return "0:00";
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs < 10 ? '0' + secs : secs}`;
+};
+
 const PageEditor = ({
   pages,
   currentPage,
@@ -18,32 +26,11 @@ const PageEditor = ({
   description,
   setDescription,
   onBackToProjects,
-  onShowPublishModal
+  onShowPublishModal,
+  onShowSoundSelector
 }) => {
   return (
-    <div className="max-w-[95vw] mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="flex justify-between items-center mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-white">Manga Studio</h1>
-          <p className="text-gray-400 mt-1">Create your manga with custom panels and characters</p>
-        </div>
-        
-        <div className="flex space-x-3">
-          <button
-            onClick={onBackToProjects}
-            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors duration-300 mr-2"
-          >
-            Back to Projects
-          </button>
-          <button 
-            onClick={onShowPublishModal}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors duration-300"
-          >
-            Publish
-          </button>
-        </div>
-      </div>
-      
+    <div className="max-w-full mx-auto px-4 sm:px-6 lg:px-8 py-4">
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Main Comic Page Display - Takes 3/4 of the space */}
         <div className="lg:col-span-3 bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg">
@@ -359,6 +346,79 @@ const PageEditor = ({
             </button>
           </div>
           
+          {/* Audio Section */}
+          <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 shadow-lg">
+            <h3 className="text-lg font-semibold text-white mb-3">Page Audio</h3>
+            <div className="space-y-3">
+              {pages[currentPage].audioTrack ? (
+                <div className="bg-gray-700 rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-white font-medium truncate flex-1">{pages[currentPage].audioTrack.title}</div>
+                    <button 
+                      onClick={() => {
+                        const audio = document.getElementById(`audio-preview-${currentPage}`);
+                        if (audio.paused) {
+                          audio.play();
+                        } else {
+                          audio.pause();
+                        }
+                      }}
+                      className="flex-shrink-0 w-8 h-8 bg-blue-600 hover:bg-blue-700 rounded-full flex items-center justify-center"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </button>
+                  </div>
+                  <div className="text-xs text-gray-400">
+                    {pages[currentPage].audioTrack.artist || 'Unknown Artist'} • {formatDuration(pages[currentPage].audioTrack.duration || 0)}
+                  </div>
+                  <audio 
+                    id={`audio-preview-${currentPage}`} 
+                    src={pages[currentPage].audioTrack.url} 
+                    preload="none"
+                    loop
+                    hidden
+                  />
+                  <div className="flex justify-end mt-2">
+                    <button 
+                      onClick={() => {
+                        const newPages = [...pages];
+                        const audio = document.getElementById(`audio-preview-${currentPage}`);
+                        if (audio) {
+                          audio.pause();
+                        }
+                        newPages[currentPage].audioTrack = null;
+                        onUpdatePanel(newPages[currentPage]);
+                      }}
+                      className="text-red-400 hover:text-red-300 text-xs"
+                    >
+                      Remove Audio
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-4 bg-gray-700 rounded-lg">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 mx-auto text-gray-500 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                  </svg>
+                  <p className="text-gray-400 text-sm mb-2">No audio track for this page</p>
+                </div>
+              )}
+              
+              <button
+                onClick={() => onShowSoundSelector && onShowSoundSelector()}
+                className="w-full px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-md transition-colors duration-300 flex items-center justify-center"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                </svg>
+                {pages[currentPage].audioTrack ? 'Change Audio Track' : 'Add Audio Track'}
+              </button>
+            </div>
+          </div>
+          
           {/* Story Information Section */}
           <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 shadow-lg">
             <h3 className="text-lg font-semibold text-white mb-3">Story Information</h3>
@@ -393,6 +453,19 @@ const PageEditor = ({
                 />
               </div>
             </div>
+          </div>
+
+          {/* Publish button - moved to bottom */}
+          <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 shadow-lg">
+            <button 
+              onClick={() => onShowPublishModal && onShowPublishModal()}
+              className="w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors duration-300 flex items-center justify-center"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Publish Manga
+            </button>
           </div>
         </div>
       </div>

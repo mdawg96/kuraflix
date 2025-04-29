@@ -8,17 +8,17 @@ import { getAnalytics } from "firebase/analytics";
 // Your web app's Firebase configuration
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: "AIzaSyBzZ9nr48Rfk3EPVa1mP1xh5_j4VFOO9D0",
-  authDomain: "debatenow-83826.firebaseapp.com",
-  projectId: "debatenow-83826",
-  storageBucket: "debatenow-83826.firebasestorage.app",
-  messagingSenderId: "60690203398",
-  appId: "1:60690203398:web:7e7661758d1ff9bd0d9487",
-  measurementId: "G-3Y0KJK5N6L"
+  apiKey: "AIzaSyD1nlImVlNwOEViLtvGAk9A42sqA0YYjYU",
+  authDomain: "naruyo-6bf58.firebaseapp.com",
+  projectId: "naruyo-6bf58",
+  storageBucket: "naruyo-6bf58.firebasestorage.app",
+  messagingSenderId: "18344240696",
+  appId: "1:18344240696:web:46543ea2cb707a44cc28cd",
+  measurementId: "G-44MXR8702Y"
 };
 
 // Log what config we're using
-console.log("Firebase initializing with hardcoded config for debatenow-83826");
+console.log("Firebase initializing with config for naruyo-6bf58");
 
 // Initialize Firebase with default app
 const app = initializeApp(firebaseConfig);

@@ -72,14 +72,16 @@ const NarrationEditor = ({ selectedClip, onUpdateClip, onClose }) => {
         // Update the clip with narration data
         onUpdateClip({
           ...selectedClip,
-          startTime: startTime, // Explicitly set startTime to maintain position
           narrationText: narrationText,
           narrationVoice: voice,
           narrationSpeed: speed,
           narrationUrl: data.audioUrl,
           narrationDuration: data.duration || 3,
           hasNarration: true,
-          endTime: newEndTime // Update the clip end time to match audio duration
+          endTime: newEndTime, // Update the clip end time to match audio duration
+          positionSet: false, // Mark that this clip needs positioning
+          draft: false, // No longer a draft
+          finalized: true // Mark as finalized for timeline
         });
         
         toast.success('Narration generated successfully!');
@@ -148,6 +150,62 @@ const NarrationEditor = ({ selectedClip, onUpdateClip, onClose }) => {
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  // Helper function to create CORS-friendly URLs
+  const createProxiedUrl = (originalUrl) => {
+    // Skip if it's already a data URL
+    if (originalUrl.startsWith('data:')) {
+      return originalUrl;
+    }
+
+    // Get API base URL from environment
+    const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5001';
+
+    // For external URLs, use our proxy
+    if (originalUrl.startsWith('http') && 
+        !originalUrl.startsWith(window.location.origin) && 
+        !originalUrl.includes('/api/proxy-')) {
+      return `${apiBaseUrl}/api/proxy-media?url=${encodeURIComponent(originalUrl)}`;
+    }
+    
+    // For server output paths, ensure they have the API URL prefix
+    if (originalUrl.startsWith('/outputs/')) {
+      return `${apiBaseUrl}${originalUrl}`;
+    }
+    
+    return originalUrl;
+  };
+
+  // Function to play the generated narration
+  const playNarration = () => {
+    if (!selectedClip.narrationUrl) {
+      alert("No narration to play. Generate narration first.");
+      return;
+    }
+    
+    // Use our proxy helper function for CORS compatibility
+    const proxiedUrl = createProxiedUrl(selectedClip.narrationUrl);
+    console.log("Playing narration from:", proxiedUrl);
+    
+    // Create audio element with cross-origin attribute
+    const audio = new Audio();
+    audio.crossOrigin = "anonymous"; // Important for CORS
+    audio.src = proxiedUrl;
+    
+    // Basic error handling
+    audio.onerror = (e) => {
+      console.error("Error playing narration:", e);
+      toast.error("Error playing narration");
+    };
+    
+    // Play the audio
+    audio.play()
+      .then(() => console.log("Narration playback started"))
+      .catch(err => {
+        console.error("Could not play narration:", err);
+        toast.error("Could not play narration");
+      });
   };
 
   return (
@@ -231,6 +289,21 @@ const NarrationEditor = ({ selectedClip, onUpdateClip, onClose }) => {
           {isGenerating ? 'Generating...' : 'Generate Narration'}
         </button>
       </div>
+
+      {selectedClip.narrationUrl && (
+        <button
+          type="button"
+          onClick={playNarration}
+          className="ml-auto btn btn-primary btn-sm"
+        >
+          <div className="flex items-center">
+            <svg className="w-4 h-4 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M5 3l14 9-14 9V3z" fill="currentColor" />
+            </svg>
+            Play
+          </div>
+        </button>
+      )}
     </div>
   );
 };

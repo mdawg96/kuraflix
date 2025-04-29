@@ -3,15 +3,17 @@ import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
+import { getAnalytics } from "firebase/analytics";
 
-// Hardcoded values for the debatenow project
-const API_KEY = "AIzaSyBzZ9nr48Rfk3EPVa1mP1xh5_j4VFOO9D0";
-const AUTH_DOMAIN = "debatenow-83826.firebaseapp.com";
-const PROJECT_ID = "debatenow-83826";
-const STORAGE_BUCKET = "debatenow-83826.firebasestorage.app";
-const MESSAGING_SENDER_ID = "60690203398";
-const APP_ID = "1:60690203398:web:7e7661758d1ff9bd0d9487";
-const MEASUREMENT_ID = "G-3Y0KJK5N6L";
+// Values for the naruyo project
+const API_KEY = "AIzaSyD1nlImVlNwOEViLtvGAk9A42sqA0YYjYU";
+const AUTH_DOMAIN = "naruyo-6bf58.firebaseapp.com";
+const PROJECT_ID = "naruyo-6bf58";
+const STORAGE_BUCKET = "naruyo-6bf58.firebasestorage.app";
+const MESSAGING_SENDER_ID = "18344240696";
+const APP_ID = "1:18344240696:web:46543ea2cb707a44cc28cd";
+const MEASUREMENT_ID = "G-44MXR8702Y";
+const WEB_CLIENT_ID = "18344240696-m9p93r371045hkihi8cnu37i5ie8h05q.apps.googleusercontent.com";
 
 console.log("New Firebase Config loading with:", { 
   PROJECT_ID, 
@@ -32,11 +34,16 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase with a specific app name to avoid conflicts
-const newApp = initializeApp(firebaseConfig, "debatenow-app");
+const newApp = initializeApp(firebaseConfig, "naruyo-app");
 const newAuth = getAuth(newApp);
 const newDb = getFirestore(newApp);
 const newStorage = getStorage(newApp);
+const newAnalytics = getAnalytics(newApp);
 const newGoogleProvider = new GoogleAuthProvider();
+newGoogleProvider.setCustomParameters({
+  'login_hint': 'user@example.com',
+  'client_id': WEB_CLIENT_ID
+});
 
 console.log("New Firebase instance initialized:", {
   appName: newApp.name,
@@ -49,5 +56,6 @@ export {
   newAuth as auth,
   newDb as db,
   newStorage as storage,
-  newGoogleProvider as googleProvider
+  newGoogleProvider as googleProvider,
+  newAnalytics as analytics
 }; 

@@ -623,64 +623,143 @@ export const animeFirestore = {
   // Update an existing anime project
   updateAnimeProject: async (projectId, projectData) => {
     try {
+      // Validate inputs
+      if (!projectId) {
+        console.error("Error: Missing projectId in updateAnimeProject");
+        return { data: { success: false, message: 'Project ID is required' } };
+      }
+      
+      if (!projectData) {
+        console.error("Error: Missing projectData in updateAnimeProject");
+        return { data: { success: false, message: 'Project data is required' } };
+      }
+
+      console.log(`Updating anime project with ID: "${projectId}"`);
+      
       const userId = getCurrentUserId();
+      if (!userId) {
+        console.error("Error: No authenticated user in updateAnimeProject");
+        return { data: { success: false, message: 'User not authenticated' } };
+      }
+      
+      // Reference to the specific project document
       const projectRef = doc(db, 'animeProjects', projectId);
       
-      // Verify ownership
-      const projectDoc = await getDoc(projectRef);
-      if (!projectDoc.exists()) {
-        return { data: { success: false, message: 'Project not found' } };
+      // Verify project exists and user has ownership
+      try {
+        const projectDoc = await getDoc(projectRef);
+        if (!projectDoc.exists()) {
+          console.error(`Project with ID ${projectId} not found`);
+          return { data: { success: false, message: 'Project not found' } };
+        }
+        
+        // Verify ownership
+        const projectData = projectDoc.data();
+        if (projectData.userId !== userId) {
+          console.error(`User ${userId} doesn't have permission to update project ${projectId}`);
+          return { data: { success: false, message: 'You don\'t have permission to update this project' } };
+        }
+      } catch (lookupError) {
+        console.error(`Error verifying project ${projectId}:`, lookupError);
+        return { data: { success: false, message: `Error verifying project: ${lookupError.message}` } };
       }
       
-      if (projectDoc.data().userId !== userId) {
-        return { data: { success: false, message: 'You don\'t have permission to update this project' } };
-      }
-      
-      // Update the project
-      await updateDoc(projectRef, {
+      // Add userId and update timestamp
+      const dataToUpdate = {
         ...projectData,
+        userId,
         updatedAt: serverTimestamp()
-      });
+      };
+      
+      // Update the project document
+      await updateDoc(projectRef, dataToUpdate);
       
       return { 
         data: { 
           success: true, 
           project: {
             id: projectId,
-            ...projectData,
-            userId
+            ...dataToUpdate,
           }
         }
       };
     } catch (error) {
       console.error(`Error updating anime project ${projectId}:`, error);
-      return { data: { success: false, message: error.message } };
+      return { data: { success: false, message: error.message || 'Unknown error updating project' } };
     }
   },
   
   // Delete an anime project
   deleteAnimeProject: async (projectId) => {
     try {
+      // Validate projectId
+      if (!projectId) {
+        console.error("Error: Missing projectId in deleteAnimeProject");
+        return { data: { success: false, message: 'Project ID is required' } };
+      }
+
+      console.log(`Deleting anime project with ID: "${projectId}"`);
+      
       const userId = getCurrentUserId();
-      const projectRef = doc(db, 'animeProjects', projectId);
-      
-      // Verify ownership
-      const projectDoc = await getDoc(projectRef);
-      if (!projectDoc.exists()) {
-        return { data: { success: false, message: 'Project not found' } };
+      if (!userId) {
+        console.error("Error: No authenticated user in deleteAnimeProject");
+        return { data: { success: false, message: 'User not authenticated' } };
       }
       
-      if (projectDoc.data().userId !== userId) {
-        return { data: { success: false, message: 'You don\'t have permission to delete this project' } };
+      // First check if the project exists and belongs to this user
+      try {
+        console.log(`Verifying project ${projectId} exists before deleting...`);
+        
+        // Query for the project to confirm it exists
+        const projectsRef = collection(db, 'animeProjects');
+        const q = query(
+          projectsRef, 
+          where("userId", "==", userId),
+          where("id", "==", projectId)
+        );
+        
+        const querySnapshot = await getDocs(q);
+        
+        if (querySnapshot.empty) {
+          console.log(`No project found with id=${projectId} for user ${userId}. Checking for document ID match...`);
+          
+          // Try to get the project directly by document ID
+          const projectDocRef = doc(db, 'animeProjects', projectId);
+          const projectDoc = await getDoc(projectDocRef);
+          
+          if (!projectDoc.exists()) {
+            console.error(`Project with ID ${projectId} not found in Firestore`);
+            return { data: { success: false, message: 'Project not found in database' } };
+          }
+          
+          // Verify user owns this project
+          const projectData = projectDoc.data();
+          if (projectData.userId !== userId) {
+            console.error(`User ${userId} doesn't have permission to delete project ${projectId}`);
+            return { data: { success: false, message: 'You don\'t have permission to delete this project' } };
+          }
+          
+          // Delete using the document reference
+          await deleteDoc(projectDocRef);
+          console.log(`Successfully deleted project ${projectId} by document ID`);
+          return { data: { success: true } };
+        }
+        
+        // Project exists in query results, get the document reference
+        const projectDoc = querySnapshot.docs[0];
+        
+        // Delete the project document
+        await deleteDoc(doc(db, 'animeProjects', projectDoc.id));
+        
+        console.log(`Successfully deleted project ${projectId}`);
+        return { data: { success: true } };
+      } catch (lookupError) {
+        console.error(`Error verifying project ${projectId}:`, lookupError);
+        return { data: { success: false, message: `Error verifying project: ${lookupError.message}` } };
       }
-      
-      // Delete the project
-      await deleteDoc(projectRef);
-      
-      return { data: { success: true } };
     } catch (error) {
       console.error(`Error deleting anime project ${projectId}:`, error);
-      return { data: { success: false, message: error.message } };
+      return { data: { success: false, message: error.message || 'Unknown error deleting project' } };
     }
   }
 };

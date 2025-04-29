@@ -125,4 +125,77 @@ export const getTimelineDuration = (clips) => {
 export const repositionClips = (clips, updatedClip) => {
   // We'll now just call updateClipPosition to prevent automatic repositioning
   return updateClipPosition(clips, updatedClip);
+};
+
+/**
+ * Mark a clip as finalized for timeline persistence
+ * This ensures only clips added to the timeline get saved to Firebase
+ * @param {Object} clip - The clip to finalize
+ * @returns {Object} - The finalized clip
+ */
+export const finalizeClipForTimeline = (clip) => {
+  if (!clip) return null;
+  
+  // Create a copy to avoid modifying the original
+  const finalizedClip = { ...clip };
+  
+  // Mark clip as finalized for timeline and not a draft
+  finalizedClip.finalized = true;
+  finalizedClip.draft = false;
+  
+  // Ensure it has required properties for the timeline
+  if (finalizedClip.startTime === undefined) finalizedClip.startTime = 0;
+  if (finalizedClip.endTime === undefined) {
+    // Default to 5 seconds if no duration is specified
+    finalizedClip.endTime = finalizedClip.startTime + (finalizedClip.duration || 5);
+  }
+  
+  // Ensure proper formatting based on clip type
+  if (clip.type === 'sound') {
+    // Ensure sound clips have required fields
+    finalizedClip.soundUrl = finalizedClip.soundUrl || finalizedClip.url || '';
+    finalizedClip.title = finalizedClip.title || 'Sound Clip';
+    finalizedClip.source = finalizedClip.source || 'user';
+    
+    // Ensure duration is correctly set
+    if (finalizedClip.endTime && finalizedClip.startTime) {
+      finalizedClip.duration = finalizedClip.endTime - finalizedClip.startTime;
+    } else if (finalizedClip.duration && finalizedClip.startTime) {
+      finalizedClip.endTime = finalizedClip.startTime + finalizedClip.duration;
+    }
+  } else if (clip.type === 'narration') {
+    // Ensure narration clips have all required fields
+    finalizedClip.narrationText = finalizedClip.narrationText || '';
+    finalizedClip.narrationUrl = finalizedClip.narrationUrl || '';
+    finalizedClip.narrationVoice = finalizedClip.narrationVoice || 'alloy';
+  } else if (clip.type === 'static' || clip.type === 'video') {
+    // Ensure image/video clips have required fields
+    finalizedClip.image = finalizedClip.image || '';
+  }
+  
+  return finalizedClip;
+};
+
+/**
+ * Filter out draft clips that should not be saved to Firebase
+ * @param {Array} clips - Array of all clips
+ * @returns {Array} - Array of only finalized clips to save
+ */
+export const getClipsForSaving = (clips) => {
+  if (!clips || !Array.isArray(clips)) {
+    console.error("Invalid clips array provided to getClipsForSaving:", clips);
+    return [];
+  }
+  
+  // Filter out any draft clips that shouldn't be saved
+  return clips.filter(clip => {
+    // Skip clips explicitly marked as drafts
+    if (clip.draft === true) {
+      console.log(`Clip ${clip.id} filtered out: marked as draft`);
+      return false;
+    }
+    
+    // Keep all non-draft clips
+    return true;
+  }).map(clip => finalizeClipForTimeline(clip));
 }; 

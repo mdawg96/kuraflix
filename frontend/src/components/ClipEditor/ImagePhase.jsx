@@ -137,6 +137,7 @@ const ImagePhase = ({
       animated: false,
       aspectRatio: "9:16", // Explicitly set aspect ratio
       draft: false, // Explicitly set draft to false so it gets added to the timeline
+      positionSet: false, // Explicitly mark that this clip needs positioning
       // Add timeline positioning properties needed by the timeline
       startTime: 0, // The parent component will position it appropriately
       endTime: finalDuration, // Just set initial duration - parent will reposition
@@ -252,19 +253,15 @@ const ImagePhase = ({
         // Set aspect ratio
         updateClipProperty('aspectRatio', "9:16");
         
-        // Save to localStorage as a backup
-        try {
-          localStorage.setItem('lastAnimationUrl', fullAnimationUrl);
-          localStorage.setItem('lastClipId', selectedClip.id);
-        } catch (err) {
-          console.error("Failed to save animation URL to localStorage:", err);
-        }
-        
         // Save to window cache
-        if (!window.clipAnimationUrls) {
-          window.clipAnimationUrls = {};
+        try {
+          if (!window.clipAnimationUrls) {
+            window.clipAnimationUrls = {};
+          }
+          window.clipAnimationUrls[selectedClip.id] = fullAnimationUrl;
+        } catch (err) {
+          console.error("Failed to cache animation URL:", err);
         }
-        window.clipAnimationUrls[selectedClip.id] = fullAnimationUrl;
         
         toast.success('Animation generated successfully!');
         

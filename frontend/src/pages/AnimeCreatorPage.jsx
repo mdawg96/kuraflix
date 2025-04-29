@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import TimelineEditor from '../components/TimelineEditor';
 import ClipEditor from '../components/ClipEditor';
 import ImageGenerationProgress from '../components/ImageGenerationProgress';
@@ -9,33 +9,21 @@ import { firestoreService } from '../services/firestoreService';
 import NarrationEditor from '../components/NarrationEditor';
 import SoundSelector from '../components/SoundSelector';
 import { v4 as uuidv4 } from 'uuid';
+import { getClipsForSaving, finalizeClipForTimeline } from '../components/TimelineEditor/utils/ClipUtils';
+import { collection, query, where, orderBy, getDocs } from 'firebase/firestore';
+import { db } from '../firebase/config';
+import { useAuth } from '../context/AuthContext';
+import { getCurrentUser } from '../firebase/auth';
 
 const AnimeCreatorPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [showProjectSelector, setShowProjectSelector] = useState(true);
-  const [projectList, setProjectList] = useState(() => {
-    // Try to load saved projects from localStorage on initial render
-    try {
-      const savedProjects = localStorage.getItem('animeStudioProjects');
-      return savedProjects ? JSON.parse(savedProjects) : [];
-    } catch (error) {
-      console.error('Error loading projects from localStorage:', error);
-      return [];
-    }
-  });
+  const [projectList, setProjectList] = useState([]);
   const [currentProject, setCurrentProject] = useState(null);
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
-  
-  // Add an effect to save projects to localStorage whenever the list changes
-  useEffect(() => {
-    try {
-      localStorage.setItem('animeStudioProjects', JSON.stringify(projectList));
-      console.log('Saved projects to localStorage:', projectList);
-    } catch (error) {
-      console.error('Error saving projects to localStorage:', error);
-    }
-  }, [projectList]);
+  const [loading, setLoading] = useState(false);
+  const { user: authUser } = useAuth();
   
   // Editor state - only used after project selection
   const [scenes, setScenes] = useState([createDefaultScene()]);
@@ -76,34 +64,8 @@ const AnimeCreatorPage = () => {
     console.log(`Character "${character.name}" removed from project`);
   };
   
-  // Check URL params on component mount and when popstate fires
-  useEffect(() => {
-    // Parse URL parameters
-    const urlParams = new URLSearchParams(location.search);
-    const view = urlParams.get('view');
-    const projectId = urlParams.get('projectId');
-    
-    // Handle routing based on URL parameters
-    if (view === 'editor') {
-      if (projectId === 'new') {
-        // Auto-create a new project
-        createNewProject();
-      } else if (projectId) {
-        // Try to load the specific project
-        const projectToLoad = projectList.find(p => p.id === projectId);
-        if (projectToLoad) {
-          loadProject(projectToLoad);
-        } else {
-          // Project not found, show project selector
-          toast.error("Project not found");
-          setShowProjectSelector(true);
-        }
-      }
-    } else {
-      // Default view is project selector
-      setShowProjectSelector(true);
-    }
-  }, [location.search, projectList]);
+  // Add state for project creation
+  const [isCreatingProject, setIsCreatingProject] = useState(false);
   
   // Load character data
   const loadCharacters = async () => {
@@ -175,96 +137,189 @@ const AnimeCreatorPage = () => {
     };
   }
   
-  // Load an existing project and proceed to editor
-  const loadProject = async (project) => {
-    console.log("Loading project:", project);
-    
-    // Update state with the project data
-    setScenes(project.scenes || []);
-    setCurrentScene(0);
-    setIsGenerating(false);
-    setGenerationProgress(0);
-    
-    // Also load characters if available
-    if (project.id) {
-      try {
-        const response = await firestoreService.getProjectCharacters(project.id);
-        if (response.success) {
-          setProjectCharacters(response.data);
-          console.log("Loaded characters for project:", response.data);
+  // Load a project from Firebase
+  const loadProject = async (projectId) => {
+    if (!projectId) {
+      console.error("No project ID provided");
+      toast.error("No project ID provided");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      console.log("Loading project:", projectId);
+      
+      // Handle both project ID object and direct ID string
+      const id = typeof projectId === 'object' ? projectId.id : projectId;
+      
+      const response = await firestoreService.getProject(id);
+      if (!response.success) {
+        console.error("Error loading project:", response.error);
+        toast.error("Error loading project: " + response.error);
+        setLoading(false);
+        return;
+      }
+      
+      const project = response.data;
+      console.log("Project data loaded:", project);
+
+      // Initialize scenes
+      let projectScenes = [];
+      
+      // Parse scenes from JSON string or use array directly
+      if (typeof project.scenes === 'string') {
+        try {
+          console.log("Parsing scenes from JSON string...");
+          projectScenes = JSON.parse(project.scenes);
+          console.log("Parsed scenes:", projectScenes);
+        } catch (err) {
+          console.error("Error parsing scenes JSON:", err);
+          toast.error("Error parsing project data");
+          projectScenes = [createDefaultScene()];
+        }
+      } else if (Array.isArray(project.scenes)) {
+        projectScenes = project.scenes;
+      } else {
+        console.warn("No valid scenes found, creating default scene");
+        projectScenes = [createDefaultScene()];
+      }
+
+      // Validate and process each scene
+      projectScenes.forEach((scene, sceneIndex) => {
+        // Ensure scene has required fields
+        if (!scene.id) {
+          scene.id = `scene-${Date.now()}-${sceneIndex}`;
+        }
+        
+        if (!scene.title) {
+          scene.title = `Scene ${sceneIndex + 1}`;
+        }
+        
+        // Ensure clips array exists
+        if (!Array.isArray(scene.clips)) {
+          console.warn(`Scene ${sceneIndex} has invalid clips array, fixing...`);
+          scene.clips = [];
         } else {
-          console.error("Failed to load characters for project:", response.error);
+          // Process all clips to ensure they're properly finalized
+          scene.clips = scene.clips.map(clip => finalizeClipForTimeline(clip));
+          
+          // Log sound clips for debugging
+          const soundClips = scene.clips.filter(clip => clip.type === 'sound');
+          if (soundClips.length > 0) {
+            console.log(`Found ${soundClips.length} sound clips in scene ${sceneIndex}:`, 
+              soundClips.map(clip => ({
+                id: clip.id, 
+                type: clip.type,
+                title: clip.title,
+                soundUrl: clip.soundUrl || clip.url,
+                startTime: clip.startTime,
+                endTime: clip.endTime,
+                duration: clip.endTime - clip.startTime,
+                finalized: clip.finalized
+              }))
+            );
+          }
+        }
+      });
+
+      // Set project properties
+      setStoryTitle(project.title || 'Untitled Project');
+      setAuthor(project.author || 'Anonymous');
+      setDescription(project.description || '');
+      setGenre(project.genre || '');
+      setScenes(projectScenes);
+      setCurrentScene(projectScenes[0] || createDefaultScene());
+      
+      // Set current project
+      setCurrentProject({
+        id: id,
+        title: project.title,
+        thumbnailUrl: project.thumbnailUrl,
+        created: project.created,
+        lastModified: project.lastModified,
+        author: project.author,
+        description: project.description,
+        genre: project.genre
+      });
+
+      // Load characters associated with this project
+      try {
+        const charactersResponse = await firestoreService.getProjectCharacters(id);
+        if (charactersResponse.success) {
+          setProjectCharacters(charactersResponse.data || []);
+        } else {
+          console.warn("Could not load project characters:", charactersResponse.error);
         }
       } catch (error) {
         console.error("Error loading project characters:", error);
       }
+
+      toast.success("Project loaded successfully!");
+      return true;
+    } catch (error) {
+      console.error("Error loading project:", error);
+      toast.error("Failed to load project: " + error.message);
+      return false;
+    } finally {
+      setLoading(false);
     }
-    
-    setShowProjectSelector(false);
-    
-    // Update URL to reflect loaded project
-    navigate(`/anime-studio?view=editor&projectId=${project.id}`, { replace: true });
   };
   
   // Create a new project and proceed to editor
   const createNewProject = async (title = 'New Project', author = 'Anonymous') => {
-    console.log('Creating new project');
-    
-    // Create a default scene
-    const defaultScene = {
-      id: uuidv4(),
-      name: "Scene 1",
-      duration: 5,
-      clips: [],
-    };
-
-    // Create a new project with the provided title and author
-    const newProject = {
-      id: uuidv4(),
-      title: title,
-      author: author,
-      description: "",
-      scenes: [defaultScene],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    
     try {
-      // Save the new project to Firestore
-      const response = await firestoreService.saveAnimeProject(newProject);
+      // Prevent duplicate project creation
+      if (isCreatingProject) return;
       
-      if (response.success) {
-        console.log("Project created successfully:", response.data);
-        // Update the project with the ID from Firestore
-        const savedProject = response.data;
-        
-        // Update local state
-        setScenes([defaultScene]);
-        setCurrentScene(0);
-        setShowProjectSelector(false);
-        
-        // Show success message
-        toast.success("New project created successfully!");
-        
-        // Update URL to reflect new project
-        navigate(`/anime-studio?view=editor&projectId=${savedProject.id}`, { replace: true });
-      } else {
-        console.error("Failed to create project:", response.error);
-        toast.error("Failed to create new project. Please try again.");
-        
-        // Fallback to local state only if save fails
-        setScenes([defaultScene]);
-        setCurrentScene(0);
-        setShowProjectSelector(false);
-      }
-    } catch (error) {
-      console.error("Error creating new project:", error);
-      toast.error("An error occurred while creating the project.");
+      console.log("Starting new project creation...");
+      setIsCreatingProject(true);
       
-      // Fallback to local state only
-      setScenes([defaultScene]);
+      // Create a new project ID
+      const projectId = 'project-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+      
+      // Create default project data WITHOUT saving to Firestore initially
+      const projectData = {
+        id: projectId,
+        title,
+        author,
+        description: '',
+        scenes: [createDefaultScene()],
+        thumbnail: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        lastEdited: new Date().toLocaleString(),
+        isNew: true // Flag to indicate this is a new unsaved project
+      };
+      
+      console.log('Project data created locally:', projectData);
+      
+      // Set all state in a synchronous block to prevent race conditions
+      setCurrentProject(projectData);
+      setScenes([createDefaultScene()]);
       setCurrentScene(0);
+      setStoryTitle(title);
+      setAuthor(author);
+      setDescription('');
+      
+      // IMPORTANT: Set showProjectSelector to false LAST after all other state is set
+      console.log("Switching to editor view...");
       setShowProjectSelector(false);
+      
+      // Update URL for bookmarking, but don't rely on this for the view change
+      navigate(`/anime-studio?view=editor&projectId=${projectId}`, { replace: true });
+      
+      toast.success('New project created. Remember to save your work!');
+      
+      // Small delay before resetting the creating state to ensure everything is rendered
+      setTimeout(() => {
+        setIsCreatingProject(false);
+        console.log("Project creation complete.");
+      }, 500);
+    } catch (error) {
+      console.error('Error creating new project:', error);
+      toast.error('Failed to create new project');
+      setIsCreatingProject(false);
+      setShowProjectSelector(true); // Ensure we show the selector on error
     }
   };
   
@@ -274,161 +329,324 @@ const AnimeCreatorPage = () => {
     if (showProjectSelector) {
       loadProjects();
     }
-  }, [showProjectSelector]);
+  }, [showProjectSelector, authUser]);
   
-  // Save project automatically when scenes change (with debounce)
-  useEffect(() => {
-    if (!currentProject || !currentProject.id) return;
-    
-    const debounceTimer = setTimeout(() => {
-      saveProject();
-    }, 2000);
-    
-    return () => clearTimeout(debounceTimer);
-  }, [scenes, storyTitle, author]);
-  
-  // Function to autosave the current project
+  // Save project to database
   const saveProject = async () => {
-    // Create updated project object with current state
-    // Use default values if fields are empty
-    const updatedProject = {
-      ...currentProject,
-      title: storyTitle || "Untitled Project",
-      author: author || "Anonymous",
-      description: description || "",
-      lastModified: new Date().toISOString(),
-      scenes: scenes
-    };
-    
     try {
-      // Add a more visible saving indicator
-      const toastId = toast.loading("Saving project...");
+      // Validate basic requirements
+      if (!storyTitle) {
+        toast.error("Please enter a title for your project");
+        return;
+      }
+
+      // Get user ID from auth
+      const user = authUser || getCurrentUser();
+      if (!user || !user.uid) {
+        console.error("No authenticated user found");
+        toast.error("You must be logged in to save a project");
+        return;
+      }
+
+      setLoading(true);
+      console.log("Saving project...");
+
+      // Create a deep copy of scenes to avoid modifying state directly
+      const scenesToSave = JSON.parse(JSON.stringify(scenes));
       
-      // Save to Firestore
-      // Use updateAnimeProject instead of updateProject and pass projectId and project data
-      await firestoreService.updateAnimeProject(updatedProject.id, updatedProject);
-      
-      // Update local project list
-      setProjectList(prevProjects => {
-        return prevProjects.map(p => 
-          p.id === updatedProject.id ? updatedProject : p
-        );
+      // Process each scene to finalize its clips for saving
+      scenesToSave.forEach((scene, index) => {
+        if (!Array.isArray(scene.clips)) {
+          console.warn(`Scene ${index} has invalid clips array, fixing...`);
+          scene.clips = [];
+        } else {
+          // Process clips using the getClipsForSaving utility
+          scene.clips = getClipsForSaving(scene.clips);
+          
+          // Log sound clips for debugging
+          const soundClips = scene.clips.filter(clip => clip.type === 'sound');
+          if (soundClips.length > 0) {
+            console.log(`Saving ${soundClips.length} sound clips in scene ${index}:`, 
+              soundClips.map(clip => ({
+                id: clip.id, 
+                type: clip.type,
+                title: clip.title,
+                soundUrl: clip.soundUrl || clip.url,
+                startTime: clip.startTime,
+                endTime: clip.endTime,
+                duration: clip.duration
+              }))
+            );
+          }
+        }
       });
-      
-      // Update toast with success message
-      toast.success('Project saved successfully!', { id: toastId, duration: 3000 });
+
+      // Prepare project data
+      const projectData = {
+        title: storyTitle,
+        author: author || user.displayName || 'Anonymous',
+        description: description || '',
+        genre: genre || '',
+        scenes: JSON.stringify(scenesToSave),
+        thumbnailUrl: currentProject?.thumbnailUrl || '',
+        userId: user.uid,
+        lastModified: new Date().toISOString()
+      };
+
+      console.log("Saving project data:", projectData);
+
+      // If we already have a project ID, update that project
+      if (currentProject?.id) {
+        console.log("Updating existing project:", currentProject.id);
+        const updateResult = await firestoreService.updateProject(
+          currentProject.id, 
+          projectData
+        );
+        
+        if (updateResult.success) {
+          console.log("Project updated successfully:", updateResult.data);
+          toast.success("Project updated successfully!");
+          
+          // Update current project with latest data
+          setCurrentProject({
+            ...currentProject,
+            ...projectData,
+            lastModified: new Date().toISOString()
+          });
+          
+          return updateResult.data;
+        } else {
+          console.error("Error updating project:", updateResult.error);
+          toast.error("Failed to update project: " + updateResult.error);
+          return null;
+        }
+      } 
+      // Otherwise create a new project
+      else {
+        console.log("Creating new project");
+        // Add created timestamp for new projects
+        projectData.created = new Date().toISOString();
+        
+        const createResult = await firestoreService.createProject(projectData);
+        
+        if (createResult.success) {
+          console.log("Project created successfully:", createResult.data);
+          toast.success("Project created successfully!");
+          
+          // Set current project with the new project data including ID
+          setCurrentProject({
+            ...projectData,
+            id: createResult.data,
+            created: projectData.created
+          });
+          
+          // Update URL to include the new project ID
+          navigate(`/anime-studio?view=editor&projectId=${createResult.data}`, { replace: true });
+          
+          return createResult.data;
+        } else {
+          console.error("Error creating project:", createResult.error);
+          toast.error("Failed to create project: " + createResult.error);
+          return null;
+        }
+      }
     } catch (error) {
-      console.error("Error saving to Firestore:", error);
-      toast.error("Couldn't save to cloud. Saving locally instead.");
-      
-      // Fallback to localStorage on Firestore error
-      saveToLocalStorage(updatedProject);
-    }
-  };
-  
-  // Fallback to localStorage
-  const saveToLocalStorage = (project) => {
-    try {
-      // Update the project in the list
-      const updatedList = projectList.map(p => 
-        p.id === project.id ? project : p
-      );
-      
-      // Save to localStorage
-      localStorage.setItem('animeStudioProjects', JSON.stringify(updatedList));
-      
-      // Update state
-      setProjectList(updatedList);
-      console.log("Project saved to localStorage as fallback");
-    } catch (error) {
-      console.error("Error saving to localStorage:", error);
+      console.error("Error saving project:", error);
+      toast.error("Failed to save project: " + error.message);
+      return null;
+    } finally {
+      setLoading(false);
     }
   };
   
   // Load projects from Firestore instead of localStorage
   const loadProjects = async () => {
-    setIsLoadingProjects(true);
-    
     try {
-      const response = await firestoreService.getAnimeProjects();
+      setLoading(true);
       
-      if (response.success) {
-        setProjectList(response.data);
-        console.log("Loaded projects from Firestore:", response.data);
-      } else {
-        console.error("Failed to load projects:", response.error);
-        // Fallback to localStorage if Firestore fails
-        loadProjectsFromLocalStorage();
+      // Get current user from context or auth service
+      const currentUser = authUser || getCurrentUser();
+      if (!currentUser || !currentUser.uid) {
+        console.error("No authenticated user found");
+        toast.error("You must be logged in to load projects");
+        setLoading(false);
+        return [];
       }
-    } catch (error) {
-      console.error("Error loading projects:", error);
-      // Fallback to localStorage if Firestore fails
-      loadProjectsFromLocalStorage();
+      
+      // Create a query reference
+      const projectsRef = collection(db, "projects");
+      const projectsQuery = query(
+        projectsRef,
+        where("userId", "==", currentUser.uid),
+        orderBy("lastModified", "desc")
+      );
+      
+      // Execute the query
+      const projectsSnapshot = await getDocs(projectsQuery);
+
+      let loadedProjects = [];
+      
+      projectsSnapshot.forEach((doc) => {
+        try {
+          const project = { id: doc.id, ...doc.data() };
+          
+          // Parse scenes if they are stored as a string
+          let projectScenes = [];
+          if (typeof project.scenes === 'string') {
+            try {
+              console.log("Parsing scenes from JSON string...");
+              projectScenes = JSON.parse(project.scenes);
+              // Ensure each scene has required fields
+              projectScenes = projectScenes.map(scene => ({
+                ...scene,
+                id: scene.id || `scene-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                title: scene.title || 'Untitled Scene',
+              }));
+            } catch (err) {
+              console.error("Error parsing scenes JSON:", err);
+              projectScenes = [createDefaultScene()];
+            }
+          } else if (Array.isArray(project.scenes)) {
+            projectScenes = project.scenes;
+          } else {
+            projectScenes = [createDefaultScene()];
+          }
+          
+          // Validate clips in each scene
+          projectScenes.forEach((scene, sceneIndex) => {
+            if (!Array.isArray(scene.clips)) {
+              console.warn(`Scene ${sceneIndex} has invalid clips array, fixing...`);
+              scene.clips = [];
+            } else {
+              // Process all clips to ensure they are properly finalized
+              scene.clips = scene.clips.map(clip => {
+                // Apply finalizeClipForTimeline to ensure all required properties exist
+                return finalizeClipForTimeline(clip);
+              });
+              
+              // Log sound clips for debugging
+              const soundClips = scene.clips.filter(clip => clip.type === 'sound');
+              if (soundClips.length > 0) {
+                console.log(`Found ${soundClips.length} sound clips in scene ${sceneIndex}:`, 
+                  soundClips.map(clip => ({
+                    id: clip.id, 
+                    type: clip.type,
+                    title: clip.title,
+                    soundUrl: clip.soundUrl,
+                    url: clip.url,
+                    startTime: clip.startTime,
+                    endTime: clip.endTime,
+                    duration: clip.duration,
+                    finalized: clip.finalized
+                  }))
+                );
+              }
+            }
+          });
+          
+          // Update project with processed scenes
+          project.scenes = projectScenes;
+          
+          // Add project to list if it has required fields
+          if (project.title && project.author) {
+            loadedProjects.push(project);
+          } else {
+            console.warn("Skipping project with missing required fields:", project.id);
+          }
+        } catch (err) {
+          console.error("Error processing project:", err);
+        }
+      });
+      
+      console.log("Loaded projects:", loadedProjects);
+      setProjectList(loadedProjects);
+    } catch (err) {
+      console.error("Error loading projects:", err);
+      toast.error("Failed to load projects");
     } finally {
-      setIsLoadingProjects(false);
-    }
-  };
-  
-  // Fallback to load from localStorage
-  const loadProjectsFromLocalStorage = () => {
-    try {
-      const storedProjects = localStorage.getItem('animeStudioProjects');
-      if (storedProjects) {
-        setProjectList(JSON.parse(storedProjects));
-      }
-    } catch (error) {
-      console.error("Error loading from localStorage:", error);
-      setProjectList([]);
+      setLoading(false);
     }
   };
   
   // Delete project from Firestore instead of localStorage
-  const deleteProject = async (projectId, event) => {
-    // Prevent event bubbling to parent elements
+  const deleteProject = async (project, event) => {
     if (event) {
       event.stopPropagation();
     }
-    
-    // Confirm deletion
-    if (!confirm(`Are you sure you want to delete this project?`)) {
-      return;
-    }
-    
+
     try {
-      setIsLoadingProjects(true);
+      // Show confirmation dialog
+      if (!window.confirm('Are you sure you want to delete this project? This action cannot be undone.')) {
+        return;
+      }
+
+      // Ensure we have a valid project id
+      const projectId = project?.id;
+      if (!projectId) {
+        console.error("Cannot delete project: Invalid project ID", project);
+        toast.error("Cannot delete: Invalid project ID");
+        return;
+      }
+      
+      console.log(`Deleting project with ID: ${projectId}`, project);
+      
+      // Show deletion in progress
+      const toastId = toast.loading(`Deleting project...`);
+      
+      // Try to delete from Firestore
       const response = await firestoreService.deleteAnimeProject(projectId);
       
       if (response.success) {
-        console.log("Project deleted successfully");
-        toast.success("Project deleted successfully");
+        console.log("Project deleted from Firestore successfully");
         
-        // Update local state
-        setProjectList(prev => prev.filter(project => project.id !== projectId));
+        // Update the project list after deletion - filter out the deleted project
+        setProjectList(prevProjects => prevProjects.filter(p => p.id !== projectId));
         
-        // If the current project was deleted, go back to project selector
+        // Use higher timeout to ensure Firestore has time to process the deletion
+        setTimeout(async () => {
+          try {
+            // Do a complete refresh to ensure the UI is in sync with Firestore
+            const refreshedProjects = await loadProjects();
+            console.log("Projects refreshed after deletion:", refreshedProjects);
+          } catch (refreshError) {
+            console.error("Error refreshing projects after deletion:", refreshError);
+          }
+        }, 1000);
+        
+        // Show success message
+        toast.success('Project deleted successfully', { id: toastId });
+        
+        // If we're viewing the project we just deleted, go back to the selector
         if (currentProject && currentProject.id === projectId) {
-          setCurrentProject(null);
           setShowProjectSelector(true);
+          navigate('/anime-studio', { replace: true });
         }
       } else {
-        console.error("Failed to delete project:", response.error);
-        toast.error("Failed to delete project");
+        console.error("Error deleting project from Firestore:", response.error);
         
-        // Try deleting from localStorage as fallback
-        try {
-          const updatedList = projectList.filter(project => project.id !== projectId);
-          setProjectList(updatedList);
-          localStorage.setItem('animeStudioProjects', JSON.stringify(updatedList));
-          toast.success("Project deleted from local storage");
-        } catch (storageError) {
-          console.error("Error deleting from localStorage:", storageError);
+        // If the error is "Project not found in database", the project exists in our UI but not in Firestore
+        // In this case, we should just remove it from the UI
+        if (response.error === 'Project not found in database' || response.error === 'Project not found') {
+          console.log("Project not found in Firestore but exists in UI. Removing from UI only.");
+          
+          // Update the project list to remove the phantom project
+          setProjectList(prevProjects => prevProjects.filter(p => p.id !== projectId));
+          
+          toast.success('Project removed from view', { id: toastId });
+          
+          // If we're viewing the project we just removed, go back to the selector
+          if (currentProject && currentProject.id === projectId) {
+            setShowProjectSelector(true);
+            navigate('/anime-studio', { replace: true });
+          }
+        } else {
+          // For other errors, show the error message
+          toast.error(`Failed to delete project: ${response.error}`, { id: toastId });
         }
       }
     } catch (error) {
-      console.error("Error deleting project:", error);
-      toast.error("An error occurred while deleting the project");
-    } finally {
-      setIsLoadingProjects(false);
+      console.error('Error deleting project:', error);
+      toast.error(`Failed to delete project: ${error.message}`);
     }
   };
   
@@ -588,60 +806,72 @@ const AnimeCreatorPage = () => {
   const updateClip = (updatedClip) => {
     console.log("Updating clip:", updatedClip);
     
-    // If this is a new clip or draft being finalized
-    if (updatedClip.draft === false) {
-      console.log("This is a draft clip being added to timeline");
+    // Check if this is a draft clip being added to the timeline
+    const isAddingToTimeline = !updatedClip.draft && !updatedClip.finalized;
+    
+    // If adding to timeline, finalize the clip to ensure it gets saved
+    if (isAddingToTimeline) {
+      updatedClip = finalizeClipForTimeline(updatedClip);
+      console.log("Finalizing clip for timeline:", updatedClip);
+    }
+    
+    // Update the scene state with the new/updated clip
+    setScenes(prevScenes => {
+      const newScenes = [...prevScenes];
+      const currentSceneObj = {...newScenes[currentScene]};
       
-      // Log additional info for static images
-      if (updatedClip.type === 'static') {
-        console.log("Processing static image to add to timeline", {
-          id: updatedClip.id,
-          duration: updatedClip.duration,
-          hasImage: !!updatedClip.image
-        });
+      // Ensure clips array exists
+      if (!currentSceneObj.clips) {
+        currentSceneObj.clips = [];
       }
       
-      // Add the clip to the timeline
-      setScenes(prevScenes => {
-        const newScenes = [...prevScenes];
-        const currentSceneObj = {...newScenes[currentScene]};
+      // If the clip is already in the timeline, update it
+      const clipIndex = currentSceneObj.clips.findIndex(clip => clip.id === updatedClip.id);
+      
+      if (clipIndex !== -1) {
+        // Update existing clip
+        console.log(`Updating existing clip at index ${clipIndex}:`, updatedClip);
+        currentSceneObj.clips[clipIndex] = updatedClip;
+      } else if (!updatedClip.draft) {
+        // Find where to position this clip in the timeline
+        let startTime = 0;
         
-        // Check if a clip with this ID already exists to prevent duplicates
-        const existingClipIndex = currentSceneObj.clips.findIndex(clip => clip.id === updatedClip.id);
-        if (existingClipIndex !== -1) {
-          console.warn(`Clip with ID ${updatedClip.id} already exists in the timeline, updating instead`);
-          const updatedClips = [...currentSceneObj.clips];
-          updatedClips[existingClipIndex] = updatedClip;
-          currentSceneObj.clips = updatedClips;
-        } else {
-          // Find where to position this clip in the timeline
-          let startTime = 0;
+        // Only find the end time of the last clip if there are existing clips
+        if (currentSceneObj.clips && currentSceneObj.clips.length > 0) {
+          // Find the end time of the last clip OF THE SAME TYPE
+          const clipsOfSameType = currentSceneObj.clips.filter(clip => 
+            clip.type === updatedClip.type
+          );
           
-          // Only find the end time of the last clip if there are existing clips
-          if (currentSceneObj.clips && currentSceneObj.clips.length > 0) {
-            // Find the end time of the last clip
-            currentSceneObj.clips.forEach(clip => {
+          if (clipsOfSameType.length > 0) {
+            // Find the maximum end time among clips of the same type
+            clipsOfSameType.forEach(clip => {
               if (clip.endTime > startTime) {
                 startTime = clip.endTime;
               }
             });
-          }
-          
-          // For static images, always position at the end of timeline
-          // This fixes the issue where static images were showing startTime=0
-          const isStaticImage = updatedClip.type === 'static';
-          
-          if (isStaticImage) {
-            console.log(`Positioning static image clip at startTime=${startTime}`);
+            console.log(`Found ${clipsOfSameType.length} existing clips of type ${updatedClip.type}, positioning after endTime=${startTime}`);
           } else {
-            console.log(`Positioning ${updatedClip.type} clip at startTime=${startTime}`);
+            console.log(`No existing clips of type ${updatedClip.type}, positioning at startTime=0`);
           }
-          
-          // Position this clip at the end of the timeline
+        }
+        
+        // For static images, check if we need to position at a specific time
+        const isStaticImage = updatedClip.type === 'static' || updatedClip.type === 'static_image';
+        
+        if (isStaticImage) {
+          console.log(`Positioning static image clip at startTime=${startTime}`);
+        } else {
+          console.log(`Positioning ${updatedClip.type} clip at startTime=${startTime}`);
+        }
+        
+        // Position this clip at the end of the timeline if it doesn't have startTime/endTime
+        if (updatedClip.startTime === undefined || updatedClip.endTime === undefined) {
           const finalClip = {
             ...updatedClip,
             startTime: startTime,
-            endTime: startTime + (updatedClip.duration || 3) // Use specified duration or default
+            endTime: startTime + (updatedClip.duration || 3), // Use specified duration or default
+            finalized: true // Ensure it's marked as finalized to be included in saves
           };
           
           // For static images, log the final positioning
@@ -656,13 +886,21 @@ const AnimeCreatorPage = () => {
           
           // Add the clip to the scene
           currentSceneObj.clips.push(finalClip);
+        } else {
+          // The clip already has positioning - just add it to the timeline
+          currentSceneObj.clips.push({
+            ...updatedClip,
+            finalized: true // Ensure it's marked as finalized to be included in saves
+          });
         }
-        
-        newScenes[currentScene] = currentSceneObj;
-        return newScenes;
-      });
+      }
       
-      // Close the editors after adding to timeline
+      newScenes[currentScene] = currentSceneObj;
+      return newScenes;
+    });
+    
+    // Close the editors after adding to timeline
+    if (!updatedClip.draft) {
       setShowClipEditor(false);
       setShowNarrationEditor(false);
     } else {
@@ -712,7 +950,8 @@ const AnimeCreatorPage = () => {
       environment: '',
       action: '',
       style: 'anime',
-      draft: true // Mark as draft so it doesn't get added to timeline until explicitly requested
+      draft: true, // Mark as draft so it doesn't get added to timeline until explicitly requested
+      finalized: false // Explicitly mark as not finalized
     };
     
     // Add type-specific properties
@@ -1127,10 +1366,15 @@ The scene should have a strong sense of narrative and emotional impact. Characte
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-xl font-bold text-white">Your Projects</h2>
             <button
-              onClick={() => navigate('/anime-studio?view=editor&projectId=new')}
+              onClick={() => {
+                if (!isCreatingProject) {
+                  createNewProject('New Project', 'Anonymous');
+                }
+              }}
               className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded"
+              disabled={isCreatingProject}
             >
-              Create New
+              {isCreatingProject ? 'Creating...' : 'Create New'}
             </button>
         </div>
         
@@ -1138,22 +1382,27 @@ The scene should have a strong sense of narrative and emotional impact. Characte
             <div className="text-center py-8 bg-gray-700 rounded-lg">
               <p className="text-gray-400 mb-4">You don't have any projects yet</p>
               <button
-                onClick={() => navigate('/anime-studio?view=editor&projectId=new')}
+                onClick={() => {
+                  if (!isCreatingProject) {
+                    createNewProject('New Project', 'Anonymous');
+                  }
+                }}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors duration-300"
+                disabled={isCreatingProject}
               >
-                Create Your First Project
+                {isCreatingProject ? 'Creating...' : 'Create Your First Project'}
               </button>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {projectList.map((project) => (
                 <div
-                  key={project.id}
+                  key={project.id || `temp-${Date.now()}-${Math.random()}`}
                   className="bg-gray-800 rounded-lg overflow-hidden border border-gray-700 hover:border-blue-500 transition-colors cursor-pointer relative group"
                 >
                   <div 
                     className="h-48 bg-gray-900 relative" 
-                    onClick={() => loadProject(project)}
+                    onClick={() => project && project.id && loadProject(project.id)}
                   >
                     {/* Project thumbnail - use first scene image if available */}
                     {project.scenes && project.scenes[0] && project.scenes[0].clips && 
@@ -1176,7 +1425,7 @@ The scene should have a strong sense of narrative and emotional impact. Characte
                     
                     {/* Delete button */}
                     <button
-                      onClick={(e) => deleteProject(project.id, e)}
+                      onClick={(e) => project && project.id && deleteProject(project, e)}
                       className="absolute top-2 right-2 p-1 bg-red-600 hover:bg-red-700 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
                       title="Delete project"
                     >
@@ -1186,7 +1435,7 @@ The scene should have a strong sense of narrative and emotional impact. Characte
                     </button>
                   </div>
                   
-                  <div className="p-4" onClick={() => loadProject(project)}>
+                  <div className="p-4" onClick={() => project && project.id && loadProject(project)}>
                     <h3 className="text-white font-medium truncate">
                       {project.title || "Untitled Project"}
                     </h3>
@@ -1222,18 +1471,16 @@ The scene should have a strong sense of narrative and emotional impact. Characte
   const [newProjectTitle, setNewProjectTitle] = useState('');
   const [newProjectAuthor, setNewProjectAuthor] = useState('');
 
-  // Add this function to handle adding sound from the selector
+  // Update the handleAddSound function to finalize sound clips
   const handleAddSound = (soundData) => {
     console.log("Adding sound to timeline:", soundData);
     
-    // Generate unique ID for new sound clip - ensure it's truly unique
-    const timestamp = Date.now();
-    const randomId = Math.random().toString(36).substr(2, 12);
-    const newClipId = `sound-${timestamp}-${randomId}`;
+    // Ensure we have a unique ID
+    const soundId = soundData.id || `sound-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     
     // Enforce 2-minute (120 second) limit for sound clips
     const MAX_DURATION = 120; // 2 minutes in seconds
-    const clippedDuration = Math.min(soundData.duration, MAX_DURATION);
+    const clippedDuration = Math.min(soundData.duration || 30, MAX_DURATION);
     
     if (soundData.duration > MAX_DURATION) {
       console.log(`Sound clip duration (${soundData.duration}s) exceeds 2-minute limit. Truncating to ${MAX_DURATION}s.`);
@@ -1243,22 +1490,27 @@ The scene should have a strong sense of narrative and emotional impact. Characte
       });
     }
     
-    // Create a new sound clip with the selected track data
-    const newClip = {
-      id: newClipId,
+    // Create a properly formed sound clip with all required properties
+    const soundClip = {
+      id: soundId,
       type: 'sound',
-      title: soundData.title,
-      soundUrl: soundData.url,
-      startTime: 0, // Will be positioned at the end of the timeline
-      duration: clippedDuration,
-      source: soundData.source
+      title: soundData.title || 'Sound Clip',
+      soundUrl: soundData.soundUrl || soundData.url || '', // Ensure we have the soundUrl
+      url: soundData.url || soundData.soundUrl || '',      // Backup field for compatibility
+      startTime: 0,                // Will be positioned later in the timeline
+      endTime: clippedDuration,    // Initial end time
+      duration: clippedDuration,   // Store the duration explicitly
+      source: soundData.source || 'custom',
+      artist: soundData.artist || '',
+      finalized: true              // Mark as finalized for immediate use
     };
     
+    console.log("Finalized sound clip for timeline:", soundClip);
+    
     // Close the sound selector modal BEFORE updating state
-    // This might solve timing issues
     setShowSoundSelector(false);
     
-    // Add the sound clip to the timeline - now with safeguards against duplication
+    // Add the sound clip to the timeline using the scene update logic
     setScenes(prevScenes => {
       const newScenes = [...prevScenes];
       const currentSceneObj = {...newScenes[currentScene]};
@@ -1270,8 +1522,8 @@ The scene should have a strong sense of narrative and emotional impact. Characte
       
       // Check if this exact clip already exists to prevent duplication
       const clipExists = currentSceneObj.clips.some(clip => 
-        clip.id === newClipId || 
-        (clip.soundUrl === newClip.soundUrl && clip.title === newClip.title)
+        clip.id === soundClip.id || 
+        (clip.soundUrl === soundClip.soundUrl && clip.title === soundClip.title)
       );
       
       if (clipExists) {
@@ -1284,35 +1536,41 @@ The scene should have a strong sense of narrative and emotional impact. Characte
       
       // Only find the end time of the last clip if there are existing clips
       if (currentSceneObj.clips && currentSceneObj.clips.length > 0) {
-        // Find the end time of the last clip
-        currentSceneObj.clips.forEach(clip => {
-          if (clip.endTime > startTime) {
-            startTime = clip.endTime;
-          }
-        });
+        // Find the end time of the last clip OF THE SAME TYPE
+        const clipsOfSameType = currentSceneObj.clips.filter(clip => 
+          clip.type === soundClip.type
+        );
+        
+        if (clipsOfSameType.length > 0) {
+          // Find the maximum end time among clips of the same type
+          clipsOfSameType.forEach(clip => {
+            if (clip.endTime > startTime) {
+              startTime = clip.endTime;
+            }
+          });
+          console.log(`Found ${clipsOfSameType.length} existing clips of type ${soundClip.type}, positioning after endTime=${startTime}`);
+        } else {
+          console.log(`No existing clips of type ${soundClip.type}, positioning at startTime=0`);
+        }
       }
       
-      console.log(`Positioning sound clip "${soundData.title}" at startTime=${startTime}`);
+      console.log(`Positioning sound clip "${soundClip.title}" at startTime=${startTime}`);
       
       // Position this clip at the end of the timeline
-      newClip.startTime = startTime;
-      newClip.endTime = startTime + clippedDuration;
+      soundClip.startTime = startTime;
+      soundClip.endTime = startTime + clippedDuration;
       
-      // Add the clip to the scene
-      currentSceneObj.clips.push(newClip);
+      // Add the finalized clip to the scene
+      currentSceneObj.clips.push(soundClip);
+      
       newScenes[currentScene] = currentSceneObj;
       
-      // Debug - log the updated scenes
-      console.log("Updated scenes:", JSON.stringify(newScenes));
+      console.log(`Added sound clip "${soundClip.title}" to scene ${currentSceneObj.id}:`, soundClip);
       
       return newScenes;
     });
     
-    // Use a timeout to ensure the state update has time to process
-    setTimeout(() => {
-      console.log("Checking if clip was added to scenes:", 
-        scenes[currentScene]?.clips?.some(clip => clip.id === newClipId) || false);
-    }, 500);
+    toast.success(`Added "${soundClip.title}" to timeline`);
   };
   
   // Project details modal component
@@ -1394,6 +1652,35 @@ The scene should have a strong sense of narrative and emotional impact. Characte
   useEffect(() => {
     loadCharacters();
   }, []);
+  
+  // Simple URL-based navigation effect for direct access (not for project creation)
+  // This will only handle existing projects, not "new" projects
+  useEffect(() => {
+    // Skip if we're showing the editor already or creating a project
+    if (!showProjectSelector || isCreatingProject) {
+      return;
+    }
+    
+    // Parse URL parameters
+    const urlParams = new URLSearchParams(location.search);
+    const view = urlParams.get('view');
+    const projectId = urlParams.get('projectId');
+    
+    // Only handle loading existing projects from URL
+    if (view === 'editor' && projectId && projectId !== 'new') {
+      console.log(`URL indicates existing project: ${projectId}`);
+      
+      // Find the project in the list
+      const projectToLoad = projectList.find(p => p.id === projectId);
+      if (projectToLoad) {
+        console.log(`Found project in list, loading: ${projectId}`);
+        loadProject(projectToLoad);
+      } else {
+        console.log(`Project ${projectId} not found in list`);
+        toast.error("Project not found");
+      }
+    }
+  }, [location.search, projectList, showProjectSelector, isCreatingProject]);
   
   // Render the main component
   return (

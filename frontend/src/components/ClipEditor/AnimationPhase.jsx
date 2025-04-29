@@ -8,19 +8,26 @@ const AnimationPhase = ({
   animationPrompt,
   setEditorPhase,
   updateClipProperty,
-  onUpdateClip
+  onUpdateClip,
+  autoPlayPreview = false // Default to not auto-play
 }) => {
   const videoRef = useRef(null);
   const [videoDuration, setVideoDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(0); // Initialize to 0, will be set when video loads
-  const [isPlaying, setIsPlaying] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(false); // Start paused by default
   const [videoStatus, setVideoStatus] = useState("loading"); // "loading", "error", "ready"
   const [processedUrl, setProcessedUrl] = useState(null); // Keep track of processed URL to prevent reloading
   const [loadAttempts, setLoadAttempts] = useState(0); // Track load attempts
   const initialUrlProcessed = useRef(false); // Track if we've processed the URL already
   const MAX_DURATION = 5; // Define a constant for maximum duration
+
+  // Additional useEffect to handle initial playback state
+  useEffect(() => {
+    // Ensure we start paused unless autoPlayPreview is true
+    setIsPlaying(autoPlayPreview);
+  }, [autoPlayPreview]);
 
   // Stable function to process URLs
   const getVideoUrl = useCallback((url) => {
@@ -39,6 +46,18 @@ const AnimationPhase = ({
     
     // Get API base URL from environment or use default
     const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5001';
+    
+    // If it's a data URL, return it directly
+    if (cleanUrl.startsWith('data:')) {
+      return cleanUrl;
+    }
+    
+    // For external URLs (not from our origin), use the proxy
+    if (cleanUrl.startsWith('http') && !cleanUrl.startsWith(window.location.origin) && !cleanUrl.includes('/api/proxy-')) {
+      const proxyUrl = `${apiBaseUrl}/api/proxy-media?url=${encodeURIComponent(cleanUrl)}${cacheBuster}`;
+      console.log("Using proxy for external video URL:", proxyUrl);
+      return proxyUrl;
+    }
     
     // If it's already a full URL, return it with cache buster
     if (cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://')) {
@@ -181,17 +200,13 @@ const AnimationPhase = ({
       const baseUrl = processedUrl.replace(/[?&]cb=\d+/, '');
       
       // Store in window cache
-      if (!window.clipAnimationUrls) {
-        window.clipAnimationUrls = {};
-      }
-      window.clipAnimationUrls[selectedClip.id] = baseUrl;
-      
-      // Store in localStorage
       try {
-        localStorage.setItem('lastAnimationUrl', baseUrl);
-        localStorage.setItem('lastClipId', selectedClip.id);
+        if (!window.clipAnimationUrls) {
+          window.clipAnimationUrls = {};
+        }
+        window.clipAnimationUrls[selectedClip.id] = baseUrl;
       } catch (err) {
-        console.error("Failed to save URL to localStorage:", err);
+        console.error("Failed to cache animation URL:", err);
       }
     }
   }, [processedUrl, selectedClip.id]);
@@ -360,6 +375,7 @@ const AnimationPhase = ({
       draft: false, // Explicitly mark as not a draft to add to timeline
       type: 'video',  // Explicitly set as video type for the timeline
       animated: true, // Mark as animated for the timeline
+      positionSet: false, // Mark that this clip needs positioning
     };
     
     // Apply the update through the parent component
@@ -379,15 +395,20 @@ const AnimationPhase = ({
     const video = videoRef.current;
     if (!video) return;
     
-    if (video.paused) {
+    // Update state first
+    const newPlayState = !isPlaying;
+    setIsPlaying(newPlayState);
+    
+    // Then update the video element accordingly
+    if (newPlayState) {
       video.play().catch(err => {
         console.error("Error playing video:", err);
         toast.error("Failed to play video");
+        // Reset state if play fails
+        setIsPlaying(false);
       });
-      setIsPlaying(true);
     } else {
       video.pause();
-      setIsPlaying(false);
     }
   };
 
@@ -541,6 +562,39 @@ const AnimationPhase = ({
     };
   }, [currentTime, videoDuration, videoStatus]);
 
+  // Update the video's onLoadedData event to respect autoPlayPreview
+  const handleVideoLoaded = () => {
+    // When video data is loaded, immediately check and update the duration
+    const video = videoRef.current;
+    if (video && video.duration && !isNaN(video.duration) && video.duration > 0) {
+      console.log("LoadedData: setting duration to", video.duration);
+      setVideoDuration(video.duration);
+      
+      // Also update the trim end to match the video duration
+      const newTrimEnd = Math.min(video.duration, MAX_DURATION);
+      console.log("LoadedData: setting trimEnd to", newTrimEnd);
+      setTrimEnd(newTrimEnd);
+    }
+    
+    // Always set to ready on loadeddata
+    console.log("Video loaded data - setting to ready");
+    setVideoStatus("ready");
+    
+    // Hide loading indicator
+    const loadingIndicator = document.querySelector('.video-loading-indicator');
+    if (loadingIndicator) {
+      loadingIndicator.style.display = 'none';
+    }
+    
+    // Only autoplay if explicitly requested
+    if (autoPlayPreview && video) {
+      video.play().catch(error => {
+        console.log("Could not autoplay video:", error);
+        setIsPlaying(false);
+      });
+    }
+  };
+
   return (
     <div>
       <div className="mb-6">
@@ -582,7 +636,7 @@ const AnimationPhase = ({
                       key={processedUrl} // Add key prop to force remount when URL changes
                       ref={videoRef}
                       src={processedUrl}
-                      autoPlay={isPlaying} // Only autoplay if isPlaying is true
+                      autoPlay={false} // Explicitly set to false
                       loop
                       muted
                       playsInline
@@ -613,29 +667,7 @@ const AnimationPhase = ({
                           }
                         }
                       }}
-                      onLoadedData={() => {
-                        // When video data is loaded, immediately check and update the duration
-                        const video = videoRef.current;
-                        if (video && video.duration && !isNaN(video.duration) && video.duration > 0) {
-                          console.log("LoadedData: setting duration to", video.duration);
-                          setVideoDuration(video.duration);
-                          
-                          // Also update the trim end to match the video duration
-                          const newTrimEnd = Math.min(video.duration, MAX_DURATION);
-                          console.log("LoadedData: setting trimEnd to", newTrimEnd);
-                          setTrimEnd(newTrimEnd);
-                        }
-                        
-                        // Always set to ready on loadeddata
-                        console.log("Video loaded data - setting to ready");
-                        setVideoStatus("ready");
-                        
-                        // Hide loading indicator
-                        const loadingIndicator = document.querySelector('.video-loading-indicator');
-                        if (loadingIndicator) {
-                          loadingIndicator.style.display = 'none';
-                        }
-                      }}
+                      onLoadedData={handleVideoLoaded}
                       onDurationChange={() => {
                         // This event fires when the duration property changes
                         const video = videoRef.current;

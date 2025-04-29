@@ -8,6 +8,11 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3001,
+    // Comment out the CORS headers that might interfere with OAuth
+    // headers: {
+    //   'Cross-Origin-Embedder-Policy': 'require-corp',
+    //   'Cross-Origin-Opener-Policy': 'same-origin'
+    // },
     proxy: {
       '/api': {
         target: backendUrl,
@@ -16,6 +21,12 @@ export default defineConfig({
       '/outputs': {
         target: backendUrl,
         changeOrigin: true,
+      },
+      // Add proxy for Firebase auth redirects
+      '/__/auth': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+        rewrite: (path) => path,
       },
     },
   },

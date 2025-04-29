@@ -4,7 +4,7 @@ import { toast } from 'react-hot-toast';
 // Import utility functions
 import { isJamendoUrl, getJamendoReplacement, safePlayAudio } from './utils/AudioUtils';
 import { formatTime } from './utils/TimeUtils';
-import { enforce2MinuteLimit, repositionClips, updateClipPosition, checkOverlap, getCurrentClip } from './utils/ClipUtils';
+import { enforce2MinuteLimit, repositionClips, updateClipPosition, checkOverlap, getCurrentClip, finalizeClipForTimeline, getClipsForSaving } from './utils/ClipUtils';
 import { scrollToCurrentTime, handleAutoScroll } from './utils/ScrollUtils';
 
 // Import handler functions
@@ -59,6 +59,18 @@ const TimelineEditor = ({
   const videoTrackRef = useRef(null);
   const videoRef = useRef(null);
   const audioRef = useRef(null);
+  
+  // New state variables
+  const [positionInputValue, setPositionInputValue] = useState("");
+  const [startTimeInputValue, setStartTimeInputValue] = useState("");
+  const [endTimeInputValue, setEndTimeInputValue] = useState("");
+  
+  // At the top of the component, add these state variables
+  const [inputValues, setInputValues] = useState({
+    position: null,
+    startTime: null,
+    endTime: null
+  });
   
   // Function to convert time (in seconds) to pixels based on zoom level
   const timeToPixels = (time) => {
@@ -425,7 +437,105 @@ const TimelineEditor = ({
     }
   }, [clips]);
   
-  // Handle direct adjustment of clip times via input fields
+  // Modify the updateClip function to finalize clips when they're updated in the timeline
+  const updateClip = (updatedClip) => {
+    console.log("Updating clip in timeline:", updatedClip.id);
+    
+    // Always finalize the clip when it's added or updated in the timeline
+    const finalizedClip = finalizeClipForTimeline(updatedClip);
+    
+    // Update in local state
+    if (onUpdateClip) {
+      console.log("Finalizing clip for timeline:", finalizedClip.id);
+      onUpdateClip(finalizedClip);
+    }
+    
+    // Provide feedback for successful change
+    if (typeof toast !== 'undefined') {
+      toast.success(`Clip updated`);
+    }
+  };
+  
+  // Replace the handleClipPositionChange function to use our finalized clip
+  const handleClipPositionChange = (clipId, newPosition) => {
+    console.log(`Shifting clip ${clipId} to position ${newPosition}`);
+    
+    // Get the clip to adjust
+    const clipToAdjust = localClips.find(clip => clip.id === clipId);
+    if (!clipToAdjust) {
+      console.error(`Clip with ID ${clipId} not found`);
+      return;
+    }
+    
+    // Parse the new value and validate
+    const parsedPosition = parseFloat(newPosition);
+    if (isNaN(parsedPosition)) {
+      console.error(`Invalid position value: ${newPosition}`);
+      toast.error("Please enter a valid number");
+      return;
+    }
+    
+    // Calculate the duration which should be preserved
+    const duration = clipToAdjust.endTime - clipToAdjust.startTime;
+    
+    // Create updated clip with new start and end times, preserving duration
+    const updatedClip = { 
+      ...clipToAdjust,
+      startTime: parsedPosition,
+      endTime: parsedPosition + duration
+    };
+    
+    // Ensure we're not going beyond timeline bounds
+    if (updatedClip.endTime > 120) {
+      const maxStartPosition = 120 - duration;
+      updatedClip.startTime = maxStartPosition;
+      updatedClip.endTime = 120;
+    }
+    
+    // Check for collisions with other clips of the same type
+    const otherClips = localClips.filter(c => c.id !== clipId && c.type === clipToAdjust.type);
+    const hasCollision = otherClips.some(otherClip => 
+      updatedClip.startTime < otherClip.endTime && updatedClip.endTime > otherClip.startTime
+    );
+    
+    if (hasCollision) {
+      // If there's a collision, show a warning and don't apply the change
+      toast.error("This position overlaps with another clip");
+      return;
+    }
+    
+    // Update the visual position of the clip in the timeline
+    const clipElement = document.getElementById(`clip-${clipId}`);
+    if (clipElement) {
+      // Add a smooth transition
+      clipElement.style.transition = 'left 0.3s ease';
+      
+      // Update position
+      clipElement.style.left = `${timeToPixels(updatedClip.startTime)}px`;
+      
+      // Reset transition after animation completes
+      setTimeout(() => {
+        if (clipElement) {
+          clipElement.style.transition = '';
+        }
+      }, 300);
+    }
+    
+    // Update local state for immediate visual feedback
+    setLocalClips(prevClips => 
+      prevClips.map(clip => clip.id === clipId ? updatedClip : clip)
+    );
+    
+    // Also update selected clip if this is the selected clip
+    if (selectedClip && selectedClip.id === clipId) {
+      handleClipSelection(updatedClip, localClips.findIndex(c => c.id === clipId));
+    }
+    
+    // Update clips in parent component with finalized clip
+    updateClip(updatedClip);
+  };
+  
+  // Replace the handleClipTimeAdjustment to use finalized clips
   const handleClipTimeAdjustment = (clipId, property, newValue) => {
     console.log(`Adjusting clip ${clipId} ${property} to ${newValue}`);
     
@@ -440,11 +550,9 @@ const TimelineEditor = ({
     const parsedValue = parseFloat(newValue);
     if (isNaN(parsedValue)) {
       console.error(`Invalid value for ${property}: ${newValue}`);
+      toast.error("Please enter a valid number");
       return;
     }
-    
-    // Get duration before changes (to maintain on startTime adjustments)
-    const originalDuration = clipToAdjust.endTime - clipToAdjust.startTime;
     
     // Create updated clip
     let updatedClip = { ...clipToAdjust };
@@ -465,6 +573,39 @@ const TimelineEditor = ({
       updatedClip.endTime = Math.max(minValue, Math.min(parsedValue, maxValue));
     }
     
+    // Check for collisions with other clips of the same type
+    const otherClips = localClips.filter(c => c.id !== clipId && c.type === clipToAdjust.type);
+    const hasCollision = otherClips.some(otherClip => 
+      updatedClip.startTime < otherClip.endTime && updatedClip.endTime > otherClip.startTime
+    );
+    
+    if (hasCollision) {
+      toast.error("This position overlaps with another clip");
+      return;
+    }
+    
+    // Update the visual position of the clip in the timeline
+    const clipElement = document.getElementById(`clip-${clipId}`);
+    if (clipElement) {
+      // Add a smooth transition
+      clipElement.style.transition = 'left 0.3s ease, width 0.3s ease';
+      
+      // Update position and width
+      if (property === 'startTime') {
+        clipElement.style.left = `${timeToPixels(updatedClip.startTime)}px`;
+        clipElement.style.width = `${timeToPixels(updatedClip.endTime - updatedClip.startTime)}px`;
+      } else if (property === 'endTime') {
+        clipElement.style.width = `${timeToPixels(updatedClip.endTime - updatedClip.startTime)}px`;
+      }
+      
+      // Reset transition after animation completes
+      setTimeout(() => {
+        if (clipElement) {
+          clipElement.style.transition = '';
+        }
+      }, 300);
+    }
+    
     // First update local state for immediate visual feedback
     setLocalClips(prevClips => 
       prevClips.map(clip => clip.id === clipId ? updatedClip : clip)
@@ -475,21 +616,8 @@ const TimelineEditor = ({
       handleClipSelection(updatedClip, localClips.findIndex(c => c.id === clipId));
     }
     
-    // Check for collisions with other clips of the same type
-    const otherClips = localClips.filter(c => c.id !== clipId && c.type === clipToAdjust.type);
-    const hasCollision = otherClips.some(otherClip => 
-      updatedClip.startTime < otherClip.endTime && updatedClip.endTime > otherClip.startTime
-    );
-    
-    // If there's a collision, show a warning but don't prevent the adjustment
-    if (hasCollision && typeof toast !== 'undefined') {
-      toast.warning("This position overlaps with another clip");
-    }
-    
-    // Update clips without repositioning others
-    if (onUpdateClip) {
-      onUpdateClip(updatedClip);
-    }
+    // Update clips in parent component with finalized clip
+    updateClip(updatedClip);
   };
   
   // Add direct drag functionality for clips
@@ -740,6 +868,78 @@ const TimelineEditor = ({
         </div>
       </div>
     );
+  };
+  
+  // When selectedClip changes, reset the input values
+  useEffect(() => {
+    if (selectedClip) {
+      // Reset input values when selected clip changes
+      setInputValues({
+        position: null,
+        startTime: null,
+        endTime: null
+      });
+    }
+  }, [selectedClip?.id]);
+  
+  // For handling position input change
+  const handlePositionInputChange = (e) => {
+    setInputValues(prev => ({
+      ...prev,
+      position: e.target.value
+    }));
+  };
+  
+  // For handling start time input change
+  const handleStartTimeInputChange = (e) => {
+    setInputValues(prev => ({
+      ...prev,
+      startTime: e.target.value
+    }));
+  };
+  
+  // For handling end time input change
+  const handleEndTimeInputChange = (e) => {
+    setInputValues(prev => ({
+      ...prev,
+      endTime: e.target.value
+    }));
+  };
+  
+  // For applying position change
+  const applyPositionChange = () => {
+    if (inputValues.position !== null && selectedClip) {
+      handleClipPositionChange(selectedClip.id, inputValues.position);
+      // Clear input value after applying
+      setInputValues(prev => ({
+        ...prev,
+        position: null
+      }));
+    }
+  };
+  
+  // For applying start time change
+  const applyStartTimeChange = () => {
+    if (inputValues.startTime !== null && selectedClip) {
+      handleClipTimeAdjustment(selectedClip.id, 'startTime', inputValues.startTime);
+      // Clear input value after applying
+      setInputValues(prev => ({
+        ...prev,
+        startTime: null
+      }));
+    }
+  };
+  
+  // For applying end time change
+  const applyEndTimeChange = () => {
+    if (inputValues.endTime !== null && selectedClip) {
+      handleClipTimeAdjustment(selectedClip.id, 'endTime', inputValues.endTime);
+      // Clear input value after applying
+      setInputValues(prev => ({
+        ...prev,
+        endTime: null
+      }));
+    }
   };
   
   return (
@@ -1122,12 +1322,17 @@ const TimelineEditor = ({
               
               <button
                 onClick={onSaveProject}
-                className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded mb-2 relative overflow-hidden"
+                className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded mb-2 relative overflow-hidden flex items-center justify-center gap-2 font-bold"
               >
-                <span>Save Project</span>
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+                SAVE PROJECT
               </button>
               
-              <div className="text-xs text-gray-400 mb-2 text-center">Your project will be saved with all clips and settings</div>
+              <div className="text-xs text-gray-400 mb-2 text-center bg-gray-700 p-2 rounded border border-gray-600">
+                <strong className="text-yellow-400">Important:</strong> Your work is not saved automatically. Click "Save Project" to store your changes.
+              </div>
               
               <button
                 onClick={onShowPublishModal}
@@ -1149,39 +1354,204 @@ const TimelineEditor = ({
                 </div>
                 
                 {/* New clip timing controls */}
-                <div className="border border-gray-700 rounded p-3 bg-gray-800">
-                  <h3 className="text-white text-sm font-semibold mb-3">Clip Timing</h3>
+                <div className="border border-gray-700 rounded p-4 bg-gray-800">
+                  <h3 className="text-white text-sm font-semibold mb-4">Clip Timing Controls</h3>
                   
-                  <div className="grid grid-cols-2 gap-3 mb-2">
-                    <div>
-                      <label className="block text-gray-400 text-xs mb-1">Start Time (s)</label>
-                      <input
-                        type="number"
-                        min="0"
-                        max={selectedClip.endTime - 0.5}
-                        step="0.1"
-                        value={selectedClip.startTime.toFixed(1)}
-                        onChange={(e) => handleClipTimeAdjustment(selectedClip.id, 'startTime', e.target.value)}
-                        className="w-full bg-gray-700 text-white border border-gray-600 rounded px-2 py-1 text-sm"
-                      />
+                  {/* Duration display */}
+                  <div className="bg-gray-900 p-2 rounded mb-4 text-center">
+                    <div className="text-gray-400 text-xs mb-1">Total Duration</div>
+                    <div className="text-white text-lg font-mono">{(selectedClip.endTime - selectedClip.startTime).toFixed(1)}s</div>
+                  </div>
+
+                  {/* Clip position control */}
+                  <div className="mb-5 pb-4 border-b border-gray-700">
+                    <div className="flex justify-between items-center mb-2">
+                      <label className="text-gray-300 font-medium">Clip Position</label>
+                      <div className="text-gray-400 text-xs">
+                        Current: {selectedClip.startTime.toFixed(1)}s
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-gray-400 text-xs mb-1">End Time (s)</label>
-                      <input
-                        type="number"
-                        min={selectedClip.startTime + 0.5}
-                        max="120"
-                        step="0.1"
-                        value={selectedClip.endTime.toFixed(1)}
-                        onChange={(e) => handleClipTimeAdjustment(selectedClip.id, 'endTime', e.target.value)}
-                        className="w-full bg-gray-700 text-white border border-gray-600 rounded px-2 py-1 text-sm"
-                      />
+                    
+                    <div className="flex items-center gap-2">
+                      {/* Position adjustment buttons */}
+                      <button 
+                        onClick={() => {
+                          const newPos = Math.max(0, selectedClip.startTime - 0.1);
+                          handleClipPositionChange(selectedClip.id, newPos.toFixed(1));
+                        }}
+                        className="bg-gray-700 hover:bg-gray-600 text-white w-8 h-8 rounded flex items-center justify-center"
+                      >
+                        <span className="text-xl">-</span>
+                      </button>
+                      
+                      {/* Position input field */}
+                      <div className="flex-1">
+                        <input
+                          type="text"
+                          value={inputValues.position !== null ? inputValues.position : selectedClip.startTime.toFixed(1)}
+                          onChange={handlePositionInputChange}
+                          onBlur={applyPositionChange}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.target.blur();
+                            }
+                          }}
+                          className="w-full bg-gray-600 text-white border border-gray-500 rounded px-3 py-2 text-center"
+                        />
+                      </div>
+                      
+                      <button 
+                        onClick={() => {
+                          const maxPos = 120 - (selectedClip.endTime - selectedClip.startTime);
+                          const newPos = Math.min(maxPos, selectedClip.startTime + 0.1);
+                          handleClipPositionChange(selectedClip.id, newPos.toFixed(1));
+                        }}
+                        className="bg-gray-700 hover:bg-gray-600 text-white w-8 h-8 rounded flex items-center justify-center"
+                      >
+                        <span className="text-xl">+</span>
+                      </button>
+                    </div>
+                    
+                    <div className="text-xs text-gray-400 mt-1 text-center">
+                      Moves entire clip without changing duration
                     </div>
                   </div>
                   
-                  <div>
-                    <label className="block text-gray-400 text-xs mb-1">Duration</label>
-                    <div className="text-white text-sm font-mono">{(selectedClip.endTime - selectedClip.startTime).toFixed(1)}s</div>
+                  {/* Start time adjustment */}
+                  <div className="mb-5 pb-4 border-b border-gray-700">
+                    <div className="flex justify-between items-center mb-2">
+                      <label className="text-gray-300 font-medium">Start Time</label>
+                      <div className="text-gray-400 text-xs">
+                        Current: {selectedClip.startTime.toFixed(1)}s
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => {
+                          // Move start time earlier (decrease) - makes clip longer
+                          const newStart = Math.max(0, selectedClip.startTime - 0.1);
+                          handleClipTimeAdjustment(selectedClip.id, 'startTime', newStart.toFixed(1));
+                        }}
+                        className="bg-blue-800 hover:bg-blue-700 text-white w-8 h-8 rounded flex items-center justify-center"
+                        title="Extend clip start"
+                      >
+                        <span className="text-xl">←</span>
+                      </button>
+                      
+                      {/* Start time input field */}
+                      <div className="flex-1">
+                        <input
+                          type="text"
+                          value={inputValues.startTime !== null ? inputValues.startTime : selectedClip.startTime.toFixed(1)}
+                          onChange={handleStartTimeInputChange}
+                          onBlur={applyStartTimeChange}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.target.blur();
+                            }
+                          }}
+                          className="w-full bg-blue-900 bg-opacity-30 text-white border border-blue-700 rounded px-3 py-2 text-center"
+                        />
+                      </div>
+                      
+                      <button 
+                        onClick={() => {
+                          // Move start time later (increase) - makes clip shorter
+                          const minDuration = 0.5; // Minimum clip duration in seconds
+                          const newStart = Math.min(selectedClip.endTime - minDuration, selectedClip.startTime + 0.1);
+                          handleClipTimeAdjustment(selectedClip.id, 'startTime', newStart.toFixed(1));
+                        }}
+                        className="bg-blue-800 hover:bg-blue-700 text-white w-8 h-8 rounded flex items-center justify-center"
+                        title="Shorten clip start"
+                      >
+                        <span className="text-xl">→</span>
+                      </button>
+                    </div>
+                    
+                    <div className="text-xs text-gray-400 mt-1 text-center">
+                      Adjusts start point (keeps end fixed)
+                    </div>
+                  </div>
+                  
+                  {/* End time adjustment */}
+                  <div className="mb-2">
+                    <div className="flex justify-between items-center mb-2">
+                      <label className="text-gray-300 font-medium">End Time</label>
+                      <div className="text-gray-400 text-xs">
+                        Current: {selectedClip.endTime.toFixed(1)}s
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => {
+                          // Move end time earlier (decrease) - makes clip shorter
+                          const minDuration = 0.5; // Minimum clip duration in seconds
+                          const newEnd = Math.max(selectedClip.startTime + minDuration, selectedClip.endTime - 0.1);
+                          handleClipTimeAdjustment(selectedClip.id, 'endTime', newEnd.toFixed(1));
+                        }}
+                        className="bg-green-800 hover:bg-green-700 text-white w-8 h-8 rounded flex items-center justify-center"
+                        title="Shorten clip end"
+                      >
+                        <span className="text-xl">←</span>
+                      </button>
+                      
+                      {/* End time input field */}
+                      <div className="flex-1">
+                        <input
+                          type="text"
+                          value={inputValues.endTime !== null ? inputValues.endTime : selectedClip.endTime.toFixed(1)}
+                          onChange={handleEndTimeInputChange}
+                          onBlur={applyEndTimeChange}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.target.blur();
+                            }
+                          }}
+                          className="w-full bg-green-900 bg-opacity-30 text-white border border-green-700 rounded px-3 py-2 text-center"
+                        />
+                      </div>
+                      
+                      <button 
+                        onClick={() => {
+                          // Move end time later (increase) - makes clip longer
+                          const newEnd = Math.min(120, selectedClip.endTime + 0.1);
+                          handleClipTimeAdjustment(selectedClip.id, 'endTime', newEnd.toFixed(1));
+                        }}
+                        className="bg-green-800 hover:bg-green-700 text-white w-8 h-8 rounded flex items-center justify-center"
+                        title="Extend clip end"
+                      >
+                        <span className="text-xl">→</span>
+                      </button>
+                    </div>
+                    
+                    <div className="text-xs text-gray-400 mt-1 text-center">
+                      Adjusts end point (keeps start fixed)
+                    </div>
+                  </div>
+                  
+                  {/* Timeline visualization */}
+                  <div className="mt-4">
+                    <div className="h-6 w-full bg-gray-900 rounded-md overflow-hidden relative">
+                      {/* Position indicator */}
+                      <div className="absolute top-0 bottom-0 bg-gray-800 rounded-md border border-gray-600" 
+                           style={{
+                             left: `${(selectedClip.startTime / 120) * 100}%`,
+                             width: `${((selectedClip.endTime - selectedClip.startTime) / 120) * 100}%`
+                           }}>
+                        <div className="flex items-center justify-center h-full text-xs text-gray-400">
+                          {(selectedClip.endTime - selectedClip.startTime).toFixed(1)}s
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex justify-between text-xs text-gray-500 mt-1">
+                      <span>0s</span>
+                      <span>30s</span>
+                      <span>60s</span>
+                      <span>90s</span>
+                      <span>120s</span>
+                    </div>
                   </div>
                 </div>
                 

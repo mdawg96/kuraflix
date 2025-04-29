@@ -311,15 +311,26 @@ const SoundSelector = ({ onAddSound, onClose }) => {
 
     const finalDuration = showCustomDuration ? customDuration : selectedTrack.duration;
     
-    // Call the parent component's onAddSound function
-    onAddSound({
-      title: selectedTrack.title,
-      url: selectedTrack.url,
-      duration: finalDuration,
+    // Create a fully-formed sound clip with all required properties
+    const soundClip = {
+      id: `sound-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      type: 'sound',
+      title: selectedTrack.title || 'Sound Clip',
+      soundUrl: selectedTrack.url, // Primary sound URL property
+      url: selectedTrack.url,      // Backup property for compatibility
+      startTime: 0,                // Will be positioned by the timeline
+      endTime: finalDuration,      // Initial end time (will be adjusted by timeline)
+      duration: finalDuration,     // Store the duration explicitly
       source: selectedTrack.id.includes('custom-') ? 'custom' : 'jamendo',
-      artist: selectedTrack.artist,
-      license: selectedTrack.license
-    });
+      artist: selectedTrack.artist || '',
+      license: selectedTrack.license || 'CC',
+      finalized: true              // Mark as finalized for immediate use
+    };
+    
+    console.log("Adding sound clip to timeline:", soundClip);
+    
+    // Call the parent component's onAddSound function
+    onAddSound(soundClip);
     
     toast.success(`Added "${selectedTrack.title}" to timeline`);
     onClose();

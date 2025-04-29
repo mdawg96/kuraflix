@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import HomePage from './pages/HomePage';
@@ -15,6 +15,13 @@ import AccountSettings from './pages/AccountSettings';
 import VideoTestPage from './pages/VideoTestPage';
 import { BubbleDemo } from './components';
 import { AuthProvider } from './context/AuthContext';
+
+// Special component to handle auth redirects
+const AuthHandler = () => {
+  console.log("Auth handler component rendered");
+  // Simply redirect to the home page
+  return <Navigate to="/" replace />;
+};
 
 function App() {
   return (
@@ -39,6 +46,8 @@ function App() {
               <Route path="/account-settings" element={<AccountSettings />} />
               <Route path="/bubble-demo" element={<BubbleDemo />} />
               <Route path="/video-test" element={<VideoTestPage />} />
+              {/* Special route to handle auth redirects */}
+              <Route path="/__/auth/handler" element={<AuthHandler />} />
             </Routes>
           </main>
           <Footer />

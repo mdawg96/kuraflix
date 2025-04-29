@@ -6,6 +6,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "vite",
+    "start": "vite",
     "build": "vite build",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
@@ -22,6 +23,9 @@
   "type": "module",
   "dependencies": {
     "@babel/helper-string-parser": "^7.25.9",
+    "@ffmpeg/core": "^0.10.0",
+    "@ffmpeg/ffmpeg": "^0.10.1",
+    "@ffmpeg/util": "^0.12.2",
     "@headlessui/react": "^1.7.17",
     "axios": "^1.5.0",
     "esbuild": "^0.25.2",
@@ -45,6 +49,7 @@
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.5",
     "postcss": "^8.4.35",
-    "vite": "^5.1.6"
+    "vite": "^5.1.6",
+    "vite-plugin-pwa": "^1.0.0"
   }
 }

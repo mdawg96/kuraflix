@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { auth } from '../firebase/config';
 import { signInWithGoogle } from '../firebase/auth';
+import { simpleGoogleSignIn } from '../firebase/minimal-auth';
 import UsernameSetupModal from '../components/UsernameSetupModal';
 
 const LoginPage = () => {
@@ -70,27 +71,70 @@ const LoginPage = () => {
   };
 
   const handleGoogleSignIn = async () => {
+    console.log("Starting Google sign-in from login page...");
     setError('');
+    setLoading(true);
+    
     try {
-      const { user, isNewUser, error } = await signInWithGoogle();
-      if (error) {
-        setError(getFriendlyErrorMessage(error.code || error));
+      // Try the simplified method first
+      console.log("Trying simple Google sign-in method...");
+      try {
+        const result = await simpleGoogleSignIn();
+        console.log("Simple Google sign-in successful:", result);
+        
+        if (result && result.user) {
+          if (result.isNewUser) {
+            console.log("New user - showing username setup");
+            setPendingGoogleUser(result.user);
+            setShowUsernameModal(true);
+          } else {
+            console.log("Existing user - navigating to studio");
+            navigate('/studio');
+          }
+          setLoading(false);
+          return;
+        }
+      } catch (simpleError) {
+        console.error("Simple Google sign-in failed, trying standard method:", simpleError);
+      }
+      
+      // Fall back to standard method if simplified fails
+      const result = await signInWithGoogle();
+      console.log("Standard Google sign-in result:", result);
+      
+      if (result.redirecting) {
+        console.log("Redirect initiated - waiting for redirect to complete");
+        // For redirect flow, we don't need to do anything else here
+        // The page will reload and the AuthContext will handle the redirect result
+        setLoading(false);
         return;
       }
       
-      if (user) {
-        if (isNewUser) {
+      if (result.error) {
+        console.error("Google sign-in error:", result.error);
+        setError(getFriendlyErrorMessage(result.error.code || result.error));
+        setLoading(false);
+        return;
+      }
+      
+      if (result.user) {
+        console.log("Google sign-in successful, user:", result.user);
+        if (result.isNewUser) {
           // If this is a new user, show the username setup modal
-          setPendingGoogleUser(user);
+          console.log("New user - showing username setup");
+          setPendingGoogleUser(result.user);
           setShowUsernameModal(true);
         } else {
           // Existing user, proceed normally
+          console.log("Existing user - navigating to studio");
           navigate('/studio');
         }
       }
     } catch (error) {
       console.error('Google Sign In Error:', error);
       setError(getFriendlyErrorMessage(error.code));
+    } finally {
+      setLoading(false);
     }
   };
 

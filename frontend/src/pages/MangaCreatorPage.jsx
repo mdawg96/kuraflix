@@ -5,6 +5,12 @@ import ImageGenerationProgress from '../components/ImageGenerationProgress';
 import { Bubble } from '../components';
 import { textBoxToBubbleProps, bubblePropsToTextBox, createTextBox, convertToYellBubble } from '../utils/bubbleUtils';
 import PageEditor from '../components/PageEditor';
+import { collection, query, where, orderBy, getDocs, addDoc, updateDoc, doc, deleteDoc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { db } from '../firebase/config';
+import { useAuth } from '../context/AuthContext';
+import { toast } from 'react-hot-toast';
+import ProjectSelector from '../components/ProjectSelector';
+import { SoundSelector } from '../components';
 
 const MangaCreatorPageComponent = () => {
   console.log("PARENT: MangaCreatorPage render");
@@ -12,12 +18,9 @@ const MangaCreatorPageComponent = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [showProjectSelector, setShowProjectSelector] = useState(true);
-  const [projectList, setProjectList] = useState([
-    // Mock data - in a real app this would come from an API
-    { id: 1, title: 'Hero Academy', author: 'You', lastEdited: '2 days ago', pages: 5, thumbnail: '/assets/images/placeholders/image.png' },
-    { id: 2, title: 'Mystic Legends', author: 'You', lastEdited: '1 week ago', pages: 12, thumbnail: '/assets/images/placeholders/image.png' },
-    { id: 3, title: 'Shadow Realm', author: 'You', lastEdited: '3 weeks ago', pages: 8, thumbnail: '/assets/images/placeholders/image.png' },
-  ]);
+  const [projectList, setProjectList] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const { user: authUser } = useAuth();
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState(null);
   
@@ -32,6 +35,8 @@ const MangaCreatorPageComponent = () => {
   const [selectedPanel, setSelectedPanel] = useState(null);
   const [showPanelEditor, setShowPanelEditor] = useState(false);
   const [jobId, setJobId] = useState(null);
+  const [currentProject, setCurrentProject] = useState(null);
+  const [showSoundSelector, setShowSoundSelector] = useState(false);
   
   // Style selection state
   const [styleType, setStyleType] = useState('manga');
@@ -42,16 +47,61 @@ const MangaCreatorPageComponent = () => {
   const [allCharacters, setAllCharacters] = useState([]);
   const [loadingCharacters, setLoadingCharacters] = useState(true);
   
+  // Load user projects from Firestore
+  const loadProjects = async () => {
+    try {
+      setLoading(true);
+      
+      // Get current user ID
+      if (!authUser) {
+        console.warn("User not authenticated");
+        setProjectList([]);
+        setLoading(false);
+        return;
+      }
+      
+      console.log("Loading manga projects for user:", authUser.uid);
+      
+      // Query Firestore for manga projects
+      const projectsRef = collection(db, 'mangaProjects');
+      const q = query(
+        projectsRef,
+        where("userId", "==", authUser.uid),
+        orderBy("lastEdited", "desc")
+      );
+      
+      const querySnapshot = await getDocs(q);
+      console.log(`Found ${querySnapshot.docs.length} manga projects`);
+      
+      const projects = querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          title: data.title || 'Untitled Project',
+          author: data.author || 'Anonymous',
+          lastEdited: data.lastEdited ? new Date(data.lastEdited.toDate()).toLocaleDateString() : 'Unknown',
+          pageCount: data.pageCount || 0,
+          thumbnail: data.thumbnail || '/images/placeholder-panel.png',
+          description: data.description || '',
+          genre: data.genre || '',
+        };
+      });
+      
+      setProjectList(projects);
+    } catch (error) {
+      console.error("Error loading manga projects:", error);
+      toast.error("Failed to load your manga projects");
+    } finally {
+      setLoading(false);
+    }
+  };
+  
   // Load user projects on component mount
   useEffect(() => {
-    // In a real app, you would fetch the user's projects from an API
-    // For example: 
-    // async function fetchProjects() {
-    //   const response = await mangaAPI.getUserProjects();
-    //   setProjectList(response.data.projects);
-    // }
-    // fetchProjects();
-  }, []);
+    if (showProjectSelector && authUser) {
+      loadProjects();
+    }
+  }, [showProjectSelector, authUser]);
   
   // Check URL params on component mount and when popstate fires
   useEffect(() => {
@@ -65,11 +115,7 @@ const MangaCreatorPageComponent = () => {
       
       // If we have a project ID and it's not 'new', try to find and load the project
       if (projectId && projectId !== 'new') {
-        const project = projectList.find(p => p.id.toString() === projectId);
-        if (project) {
-          setStoryTitle(project.title);
-          setAuthor(project.author);
-        }
+        loadExistingProject(projectId);
       }
     } else {
       setShowProjectSelector(true);
@@ -93,17 +139,73 @@ const MangaCreatorPageComponent = () => {
     return () => {
       window.removeEventListener('popstate', handlePopState);
     };
-  }, [projectList]);
+  }, [location.search]);
+  
+  // Load an existing project from Firestore
+  const loadExistingProject = async (projectId) => {
+    try {
+      setLoading(true);
+      console.log("Loading manga project:", projectId);
+      
+      // Get the project document from Firestore
+      const projectDoc = await getDoc(doc(db, 'mangaProjects', projectId));
+      
+      if (!projectDoc.exists()) {
+        console.error("Project not found:", projectId);
+        toast.error("Project not found");
+        setLoading(false);
+        return;
+      }
+      
+      const projectData = projectDoc.data();
+      
+      // Set project state
+      setCurrentProject({
+        id: projectDoc.id,
+        ...projectData
+      });
+      
+      setStoryTitle(projectData.title || 'Untitled Manga');
+      setAuthor(projectData.author || 'Anonymous');
+      setGenre(projectData.genre || '');
+      setDescription(projectData.description || '');
+      
+      // Parse pages from JSON if stored as string, or use directly if array
+      let projectPages = [];
+      if (typeof projectData.pages === 'string') {
+        try {
+          projectPages = JSON.parse(projectData.pages);
+        } catch (err) {
+          console.error("Error parsing pages JSON:", err);
+          projectPages = [createDefaultPage()];
+        }
+      } else if (Array.isArray(projectData.pages)) {
+        projectPages = projectData.pages;
+      } else {
+        projectPages = [createDefaultPage()];
+      }
+      
+      // Initialize pages with the loaded data
+      setPages(projectPages);
+      setCurrentPage(0);
+      
+      setShowProjectSelector(false);
+      
+      toast.success("Project loaded successfully!");
+    } catch (error) {
+      console.error("Error loading project:", error);
+      toast.error("Failed to load project: " + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
   
   // Load an existing project and proceed to editor
   const loadProject = (project) => {
-    // For this mock implementation, we'll just set the title and author
-    setStoryTitle(project.title);
-    setAuthor(project.author);
-    setShowProjectSelector(false);
+    // Load from Firestore based on project ID
+    loadExistingProject(project.id);
     
     // Update URL without leaving the page
-    // This creates a URL parameter instead of a new path
     window.history.pushState(
       { project },
       '',
@@ -111,10 +213,80 @@ const MangaCreatorPageComponent = () => {
     );
   };
   
+  // Save the current project to Firestore
+  const saveProject = async () => {
+    if (!authUser) {
+      toast.error("You must be logged in to save a project");
+      return;
+    }
+    
+    try {
+      setLoading(true);
+      
+      // Create a thumbnail from the first page if available
+      const thumbnail = pages.length > 0 && pages[0].panels.length > 0 
+        ? (pages[0].panels[0].image || '/images/placeholder-panel.png')
+        : '/images/placeholder-panel.png';
+      
+      // Prepare project data
+      const projectData = {
+        title: storyTitle || 'Untitled Manga',
+        author: author || authUser.displayName || 'Anonymous',
+        description: description || '',
+        genre: genre || '',
+        pages: JSON.stringify(pages),
+        pageCount: pages.length,
+        thumbnail: thumbnail,
+        userId: authUser.uid,
+        lastEdited: serverTimestamp(),
+        updated: serverTimestamp()
+      };
+      
+      let projectId;
+      
+      if (currentProject) {
+        // Update existing project
+        projectId = currentProject.id;
+        const projectRef = doc(db, 'mangaProjects', projectId);
+        await updateDoc(projectRef, projectData);
+        console.log("Updated project:", projectId);
+      } else {
+        // Create new project
+        projectData.created = serverTimestamp();
+        const projectRef = collection(db, 'mangaProjects');
+        const docRef = await addDoc(projectRef, projectData);
+        projectId = docRef.id;
+        setCurrentProject({ id: projectId, ...projectData });
+        console.log("Created new project:", projectId);
+      }
+      
+      // Update URL with the project ID
+      window.history.pushState(
+        {},
+        '',
+        `?view=editor&projectId=${projectId}`
+      );
+      
+      toast.success("Project saved successfully!");
+      return projectId;
+    } catch (error) {
+      console.error("Error saving project:", error);
+      toast.error("Failed to save project: " + error.message);
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  };
+  
   // Create a new project and proceed to editor
   const createNewProject = () => {
     setStoryTitle('Untitled Manga');
-    setAuthor('Your Name');
+    setAuthor(authUser?.displayName || 'Anonymous');
+    setDescription('');
+    setGenre('');
+    setPages([createDefaultPage()]);
+    setCurrentPage(0);
+    setCurrentProject(null);
     setShowProjectSelector(false);
     
     // Update URL without leaving the page
@@ -125,8 +297,38 @@ const MangaCreatorPageComponent = () => {
     );
   };
   
+  // Delete a project from Firestore
+  const deleteProject = async (projectId) => {
+    try {
+      setLoading(true);
+      console.log("Deleting project:", projectId);
+      
+      // Delete from Firestore
+      await deleteDoc(doc(db, 'mangaProjects', projectId));
+      
+      // Update the project list
+      setProjectList(prev => prev.filter(p => p.id !== projectId));
+      
+      toast.success("Project deleted successfully");
+      
+      // Close the confirmation modal
+      setShowDeleteConfirmation(false);
+      setProjectToDelete(null);
+    } catch (error) {
+      console.error("Error deleting project:", error);
+      toast.error("Failed to delete project: " + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
   // Handle going back to project selection
   const goBackToProjects = () => {
+    // Save current project before going back if it has changed
+    if (currentProject) {
+      saveProject();
+    }
+    
     // Update the URL and go back to projects view
     window.history.pushState({}, '', '?view=projects');
     setShowProjectSelector(true);
@@ -192,7 +394,36 @@ const MangaCreatorPageComponent = () => {
     
     setPages(prevPages => {
       // Create a new reference only if something is actually changing
-      const { row, col } = updatedPanel.position;
+      // Make sure position is defined before destructuring it
+      // If position doesn't exist, try to find the panel in the pages array to determine its position
+      let row, col;
+      
+      if (updatedPanel.position) {
+        // Position is already defined in the updated panel
+        ({ row, col } = updatedPanel.position);
+      } else {
+        // Position is missing, need to find this panel in the pages
+        let found = false;
+        prevPages[currentPage].panels.forEach((panelRow, rowIndex) => {
+          const colIndex = panelRow.findIndex(p => p.id === updatedPanel.id);
+          if (colIndex !== -1) {
+            row = rowIndex;
+            col = colIndex;
+            found = true;
+          }
+        });
+        
+        // If still not found, default to position 0,0 and log a warning
+        if (!found) {
+          console.warn(`Could not find position for panel ${updatedPanel.id}, defaulting to 0,0`);
+          row = 0;
+          col = 0;
+        }
+        
+        // Add position to the updated panel
+        updatedPanel.position = { row, col };
+      }
+      
       const oldPanel = prevPages[currentPage].panels[row][col];
       
       // Use a more efficient comparison for panels
@@ -298,6 +529,31 @@ const MangaCreatorPageComponent = () => {
     // In a real app, this would send the data to a backend
     alert(`Manga "${storyTitle}" published successfully!`);
     navigate('/my-stories');
+  };
+  
+  // Add the handleAddSound function at the main component level
+  const handleAddSound = (soundData) => {
+    console.log("Adding sound to page:", soundData);
+    
+    // Ensure we have a unique ID
+    const soundId = soundData.id || `sound-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Create a properly formed sound track with all required properties
+    const audioTrack = {
+      id: soundId,
+      title: soundData.title || 'Sound Track',
+      url: soundData.url || soundData.soundUrl || '',
+      artist: soundData.artist || '',
+      duration: soundData.duration || 0,
+    };
+    
+    // Update the current page with the audio track
+    const newPages = [...pages];
+    newPages[currentPage].audioTrack = audioTrack;
+    setPages(newPages);
+    
+    // Close the sound selector
+    setShowSoundSelector(false);
   };
   
   // Panel Editor Component
@@ -786,6 +1042,25 @@ const MangaCreatorPageComponent = () => {
         textBoxes: textBoxes, // Include the textBoxes from local state
         position: panel.position // Keep the original position
       };
+      
+      // Modify it to add position if missing
+      if (!updatedPanel.position) {
+        // Try to find the panel position in the current page
+        let found = false;
+        pages[currentPage].panels.forEach((panelRow, rowIndex) => {
+          const colIndex = panelRow.findIndex(p => p.id === panel.id);
+          if (colIndex !== -1) {
+            updatedPanel.position = { row: rowIndex, col: colIndex };
+            found = true;
+          }
+        });
+        
+        // If still not found, default to position 0,0
+        if (!found) {
+          console.warn(`Could not find position for panel ${panel.id}, defaulting to row 0, col 0`);
+          updatedPanel.position = { row: 0, col: 0 };
+        }
+      }
       
       console.log(`[Editor ${panel.id}] Final panel data being saved:`, updatedPanel);
       onUpdate(updatedPanel);
@@ -1775,79 +2050,71 @@ const MangaCreatorPageComponent = () => {
             </div>
             
             <div className="space-y-4">
+              {/* Display manga info instead of asking again */}
               <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 shadow-inner">
-                <label className="block text-gray-300 text-sm font-comic mb-2 flex items-center">
-                  <svg className="w-5 h-5 mr-2 text-anime-pink" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                  </svg>
-                  Story Title
-                </label>
-                <input
-                  type="text"
-                  value={storyTitle}
-                  onChange={(e) => setStoryTitle(e.target.value)}
-                  className="w-full bg-gray-700 border border-anime-indigo/30 rounded-lg px-3 py-2 text-white focus:border-anime-pink focus:ring-1 focus:ring-anime-pink font-comic"
-                  placeholder="Enter your manga title..."
-                />
+                <div className="flex justify-between items-center">
+                  <h3 className="text-white font-medium mb-2">Manga Details</h3>
+                  <button 
+                    onClick={() => {
+                      // Focus back to the manga details section
+                      const mainEditorArea = document.querySelector('.max-w-7xl');
+                      if (mainEditorArea) mainEditorArea.scrollIntoView({ behavior: 'smooth' });
+                      setShowPublishModal(false);
+                    }}
+                    className="text-xs text-anime-pink hover:text-anime-indigo"
+                  >
+                    Edit Details
+                  </button>
+                </div>
+                <div className="space-y-3">
+                  <div className="flex space-x-2">
+                    <span className="text-gray-400">Title:</span>
+                    <span className="text-white font-medium">{storyTitle || 'Untitled Manga'}</span>
+                  </div>
+                  <div className="flex space-x-2">
+                    <span className="text-gray-400">Author:</span>
+                    <span className="text-white">{author || 'Anonymous'}</span>
+                  </div>
+                  <div className="flex space-x-2">
+                    <span className="text-gray-400">Genre:</span>
+                    <span className="text-white">{genre || 'No genre selected'}</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-gray-400">Description:</span>
+                    <p className="text-white text-sm mt-1">{description || 'No description provided'}</p>
+                  </div>
+                </div>
               </div>
               
-              <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 shadow-inner">
-                <label className="block text-gray-300 text-sm font-comic mb-2 flex items-center">
-                  <svg className="w-5 h-5 mr-2 text-anime-indigo" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                  </svg>
-                  Author
-                </label>
-                <input
-                  type="text"
-                  value={author}
-                  onChange={(e) => setAuthor(e.target.value)}
-                  className="w-full bg-gray-700 border border-anime-indigo/30 rounded-lg px-3 py-2 text-white focus:border-anime-pink focus:ring-1 focus:ring-anime-pink font-comic"
-                  placeholder="Your name or pen name..."
-                />
-              </div>
-              
-              <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 shadow-inner">
-                <label className="block text-gray-300 text-sm font-comic mb-2 flex items-center">
-                  <svg className="w-5 h-5 mr-2 text-manga-yellow" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-                  </svg>
-                  Genre
-                </label>
-                <select
-                  value={genre}
-                  onChange={(e) => setGenre(e.target.value)}
-                  className="w-full bg-gray-700 border border-anime-indigo/30 rounded-lg px-3 py-2 text-white focus:border-anime-pink focus:ring-1 focus:ring-anime-pink font-comic"
-                >
-                  <option value="">Select Genre</option>
-                  <option value="Action">Action</option>
-                  <option value="Adventure">Adventure</option>
-                  <option value="Comedy">Comedy</option>
-                  <option value="Drama">Drama</option>
-                  <option value="Fantasy">Fantasy</option>
-                  <option value="Horror">Horror</option>
-                  <option value="Romance">Romance</option>
-                  <option value="Sci-Fi">Sci-Fi</option>
-                  <option value="Slice of Life">Slice of Life</option>
-                  <option value="Sports">Sports</option>
-                  <option value="Supernatural">Supernatural</option>
-                </select>
-              </div>
-              
-              <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 shadow-inner">
-                <label className="block text-gray-300 text-sm font-comic mb-2 flex items-center">
-                  <svg className="w-5 h-5 mr-2 text-manga-green" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
-                  </svg>
-                  Description
-                </label>
-                <textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  className="w-full bg-gray-700 border border-anime-indigo/30 rounded-lg px-3 py-2 text-white focus:border-anime-pink focus:ring-1 focus:ring-anime-pink font-comic h-24 resize-none"
-                  placeholder="Write a brief description of your manga story..."
-                ></textarea>
-              </div>
+              {/* Only show genre selector if genre is not selected yet */}
+              {!genre && (
+                <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 shadow-inner">
+                  <label className="block text-gray-300 text-sm font-comic mb-2 flex items-center">
+                    <svg className="w-5 h-5 mr-2 text-manga-yellow" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                    </svg>
+                    Please Select a Genre
+                  </label>
+                  <select
+                    value={genre}
+                    onChange={(e) => setGenre(e.target.value)}
+                    className="w-full bg-gray-700 border border-anime-indigo/30 rounded-lg px-3 py-2 text-white focus:border-anime-pink focus:ring-1 focus:ring-anime-pink font-comic"
+                  >
+                    <option value="">Select Genre</option>
+                    <option value="Action">Action</option>
+                    <option value="Adventure">Adventure</option>
+                    <option value="Comedy">Comedy</option>
+                    <option value="Drama">Drama</option>
+                    <option value="Fantasy">Fantasy</option>
+                    <option value="Horror">Horror</option>
+                    <option value="Romance">Romance</option>
+                    <option value="Sci-Fi">Sci-Fi</option>
+                    <option value="Slice of Life">Slice of Life</option>
+                    <option value="Sports">Sports</option>
+                    <option value="Supernatural">Supernatural</option>
+                  </select>
+                </div>
+              )}
             </div>
             
             <div className="mt-6 flex justify-end space-x-3">
@@ -1860,7 +2127,7 @@ const MangaCreatorPageComponent = () => {
               <button 
                 onClick={publishManga}
                 className="manga-btn bg-gradient-to-r from-anime-indigo to-anime-pink text-white rounded-lg shadow-manga hover:shadow-manga-lg transform hover:scale-105 transition-all duration-200"
-                disabled={!storyTitle || !author || !genre || !description}
+                disabled={!storyTitle || !author || !genre}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
@@ -1874,30 +2141,6 @@ const MangaCreatorPageComponent = () => {
     );
   };
 
-  // Add this function to handle deleting a project
-  const deleteProject = (projectId) => {
-    // In a real app, you would make an API call to delete from backend
-    // For example: await mangaAPI.deleteProject(projectId);
-    
-    // For our mock implementation, just filter it out of the state
-    setProjectList(projectList.filter(project => project.id !== projectId));
-    setShowDeleteConfirmation(false);
-    setProjectToDelete(null);
-  };
-
-  // Add this function to confirm deletion
-  const confirmDelete = (e, project) => {
-    e.stopPropagation(); // Prevent project from being loaded
-    setProjectToDelete(project);
-    setShowDeleteConfirmation(true);
-  };
-
-  // Add this function to cancel deletion
-  const cancelDelete = () => {
-    setShowDeleteConfirmation(false);
-    setProjectToDelete(null);
-  };
-
   // Create stable callback for PanelEditor close function
   const handlePanelEditorClose = useCallback(() => {
     console.log("Panel editor close handler called");
@@ -1906,7 +2149,7 @@ const MangaCreatorPageComponent = () => {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-900">
+    <div className="flex flex-col min-h-screen">
       {showProjectSelector ? (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
           <div className="flex justify-between items-center mb-8">
@@ -1916,65 +2159,99 @@ const MangaCreatorPageComponent = () => {
             </div>
           </div>
           
-          {/* Create New Project Card */}
-          <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg mb-8 hover:border-anime-indigo transition-all duration-200 cursor-pointer" onClick={createNewProject}>
-            <div className="flex items-center justify-center h-40 bg-gradient-to-r from-anime-indigo to-anime-pink rounded-lg mb-4">
-              <svg className="w-16 h-16 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-              </svg>
+          <ProjectSelector
+            projectList={projectList}
+            onCreateNewProject={createNewProject}
+            onLoadProject={loadProject}
+            onDeleteProject={(project) => {
+              setProjectToDelete(project);
+              setShowDeleteConfirmation(true);
+            }}
+          />
             </div>
-            <h2 className="text-xl font-bold text-white mb-2">Create New Project</h2>
-            <p className="text-gray-400">Start a fresh manga with a blank canvas</p>
+      ) : (
+        /* Editor UI */
+        <div className="flex-1 flex flex-col">
+          {/* Top Navigation Bar */}
+          <div className="bg-gray-800 border-b border-gray-700 p-4">
+            <div className="max-w-7xl mx-auto flex justify-between items-center">
+              {/* Left side - Project title */}
+              <div className="flex items-center">
+                <h1 className="text-xl font-bold text-white">{storyTitle || 'Untitled Manga'}</h1>
+                <span className="ml-2 px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300">{pages.length} pages</span>
           </div>
           
-          {/* Recent Projects Section */}
-          <div>
-            <h2 className="text-xl font-bold text-white mb-4">Recent Projects</h2>
-            {projectList.length === 0 ? (
-              <div className="text-center py-8 bg-gray-800 rounded-lg border border-gray-700">
-                <p className="text-gray-400">You don't have any projects yet</p>
+              {/* Right side - Actions */}
+              <div className="flex space-x-3">
+                <button 
+                  onClick={saveProject}
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors"
+                >
+                  Save
+                </button>
+                <button 
+                  onClick={() => setShowPublishModal(true)}
+                  className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded transition-colors"
+                >
+                  Publish
+                </button>
+                <button 
+                  onClick={goBackToProjects}
+                  className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded transition-colors"
+                >
+                  Back to Projects
+                </button>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {projectList.map(project => (
+            </div>
+          </div>
+          
+          {/* Main Content Area */}
+          <div className="flex-1 flex">
+            {/* Left Sidebar - Pages */}
+            <div className="w-20 sm:w-24 bg-gray-800 border-r border-gray-700 overflow-y-auto">
+              <div className="p-2 space-y-2">
+                {pages.map((page, index) => (
                   <div 
-                    key={project.id} 
-                    className="bg-gray-800 rounded-lg border border-gray-700 shadow-lg overflow-hidden hover:border-anime-indigo transition-all duration-200 cursor-pointer"
-                    onClick={() => loadProject(project)}
+                    key={page.id} 
+                    className={`relative p-1 cursor-pointer border ${currentPage === index ? 'border-blue-500' : 'border-gray-700'} rounded overflow-hidden hover:border-gray-600`}
+                    onClick={() => setCurrentPage(index)}
                   >
-                    <div className="relative h-40 bg-gray-700">
-                      <img 
-                        src={project.thumbnail} 
-                        alt={project.title}
-                        className="w-full h-full object-cover"
-                      />
-                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-gray-900 to-transparent py-2 px-3">
-                        <span className="text-white font-bold">{project.title}</span>
+                    <div className="aspect-w-3 aspect-h-4 bg-gray-700">
+                      <div className="text-xs text-center text-gray-400 flex items-center justify-center">
+                        Page {index + 1}
                       </div>
                     </div>
-                    <div className="p-4">
-                      <div className="flex justify-between text-sm text-gray-400 mb-1">
-                        <span>{project.author}</span>
-                        <span>{project.pages} pages</span>
                       </div>
-                      <div className="text-xs text-gray-500 mb-3">Last edited: {project.lastEdited}</div>
-                      <button 
-                        onClick={(e) => confirmDelete(e, project)}
-                        className="w-full mt-2 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-sm transition-colors duration-200"
-                        title="Delete project"
-                      >
-                        Delete Project
-                      </button>
-                    </div>
-                  </div>
                 ))}
-              </div>
+                
+                {/* Add New Page Button */}
+                      <button 
+                  onClick={addNewPage}
+                  className="w-full py-1 bg-gray-700 hover:bg-gray-600 rounded flex items-center justify-center"
+                      >
+                  <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                      </button>
+                
+                {/* Remove Page Button - only show if more than one page */}
+                {pages.length > 1 && (
+                  <button 
+                    onClick={deletePage}
+                    className="w-full py-1 bg-red-900 hover:bg-red-800 rounded flex items-center justify-center"
+                    title="Delete current page"
+                  >
+                    <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
             )}
           </div>
         </div>
-      ) : (
-        <div className="max-w-[95vw] mx-auto">
-          {/* Page Editor Component with enhanced row controls */}
+            
+            {/* Main Editor Area */}
+            <div className="flex-1 bg-gray-900 overflow-y-auto overflow-x-hidden p-4">
+              {pages.length > 0 && currentPage < pages.length ? (
           <PageEditor
             pages={pages}
             currentPage={currentPage}
@@ -1995,35 +2272,34 @@ const MangaCreatorPageComponent = () => {
             setAuthor={setAuthor}
             description={description}
             setDescription={setDescription}
-            onBackToProjects={goBackToProjects}
-            onShowPublishModal={() => setShowPublishModal(true)}
-          />
-        </div>
-      )}
-      
-      {/* Delete Confirmation Modal */}
-      {showDeleteConfirmation && projectToDelete && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
-          <div className="bg-gray-900 rounded-lg p-6 w-11/12 max-w-md border-2 border-red-500/30 shadow-2xl">
-            <h2 className="text-xl font-bold text-white mb-4">Delete Project</h2>
-            <p className="text-gray-300 mb-6">
-              Are you sure you want to delete "<span className="text-white font-semibold">{projectToDelete.title}</span>"? 
-              This action cannot be undone.
-            </p>
-            
-            <div className="flex justify-end space-x-3">
+                  onBackToProjects={null} // Remove back to projects button
+                  onShowPublishModal={() => setShowPublishModal(true)} // Add publish modal handler
+                  onShowSoundSelector={() => setShowSoundSelector(true)} // Add sound selector handler
+                />
+              ) : (
+                <div className="flex items-center justify-center h-full">
+                  <div className="text-center">
+                    <svg className="mx-auto h-12 w-12 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <h3 className="mt-2 text-sm font-medium text-gray-400">No page selected</h3>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Create a new page or select an existing page to edit
+                    </p>
+                    <div className="mt-6">
               <button 
-                onClick={cancelDelete}
-                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors duration-300"
-              >
-                Cancel
+                        onClick={addNewPage}
+                        className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                      >
+                        <svg className="-ml-1 mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                        </svg>
+                        Create New Page
               </button>
-              <button 
-                onClick={() => deleteProject(projectToDelete.id)}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded transition-colors duration-300"
-              >
-                Delete
-              </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -2035,29 +2311,47 @@ const MangaCreatorPageComponent = () => {
           panel={selectedPanel} 
           onUpdate={updatePanel} 
           onClose={handlePanelEditorClose} 
-          styleType={styleType}
-          projectId={storyTitle ? storyTitle.replace(/\s+/g, '-').toLowerCase() : 'current-project'}
         />
       )}
       
       {/* Publish Modal */}
-      {showPublishModal && (
-        <PublishModal />
-      )}
+      {showPublishModal && <PublishModal />}
       
-      {/* Image Generation Progress Modal */}
-      {jobId && (
-        <ImageGenerationProgress 
-          jobId={jobId} 
-          onComplete={handleGenerationComplete} 
-          onClose={() => setJobId(null)} 
+      {/* Delete confirmation modal */}
+      {showDeleteConfirmation && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+          <div className="bg-gray-800 p-6 rounded-lg max-w-md w-full">
+            <h3 className="text-xl font-bold text-white mb-4">Delete Project</h3>
+            <p className="text-gray-300 mb-4">
+              Are you sure you want to delete "{projectToDelete?.title}"? This action cannot be undone.
+            </p>
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => setShowDeleteConfirmation(false)}
+                className="px-4 py-2 bg-gray-700 text-white rounded hover:bg-gray-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => deleteProject(projectToDelete.id)}
+                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sound Selector Modal */}
+      {showSoundSelector && (
+        <SoundSelector
+          onAddSound={handleAddSound}
+          onClose={() => setShowSoundSelector(false)}
         />
       )}
     </div>
   );
 };
 
-// Apply React.memo to the entire component to prevent unnecessary rerenders
-const MangaCreatorPage = React.memo(MangaCreatorPageComponent);
-
-export default MangaCreatorPage; 
+export default MangaCreatorPageComponent; 

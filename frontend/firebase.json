@@ -11,7 +11,8 @@
         "source": "**",
         "destination": "/index.html"
       }
-    ]
+    ],
+    "site": "naruyo-6bf58"
   },
   "firestore": {
     "rules": "firestore.rules",
@@ -21,11 +22,17 @@
     "rules": "storage.rules"
   },
   "projects": {
-    "default": "debatenow-83826"
+    "default": "naruyo-6bf58"
+  },
+  "functions": {
+    "source": "functions"
   },
   "emulators": {
     "auth": {
       "port": 9099
+    },
+    "functions": {
+      "port": 5001
     },
     "firestore": {
       "port": 8080
@@ -36,9 +43,9 @@
     "ui": {
       "enabled": true
     },
-    "hosting": {
-      "port": 5000
-    },
     "singleProjectMode": true
+  },
+  "remoteconfig": {
+    "template": "remoteconfig.template.json"
   }
 }

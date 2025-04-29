@@ -1,269 +1,208 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate, useParams, useLocation } from 'react-router-dom';
-// Import placeholder images
-import characterPlaceholder from '../assets/images/placeholders/image.png';
-import scenePlaceholder from '../assets/images/placeholders/image.png';
-import episodePlaceholder from '../assets/images/placeholders/image.png';
-import fallbackImage from '../assets/images/placeholders/image.png'; // Using the same image as fallback
+import { useNavigate } from 'react-router-dom';
+import { collection, query, where, getDocs, orderBy, deleteDoc, doc } from 'firebase/firestore';
+import { db } from '../firebase/config';
+import { useAuth } from '../context/AuthContext';
+import { toast } from 'react-hot-toast';
+// Import placeholder image
+import fallbackImage from '../assets/images/placeholders/image.png';
+import MangaViewer from '../components/MangaViewer';
 
 const MyStoriesPage = () => {
   const navigate = useNavigate();
-  const location = useLocation();
-  const params = useParams();
-  const [activeTab, setActiveTab] = useState('characters');
-  const [expandedCharacter, setExpandedCharacter] = useState(null);
-  const [showOnlyCharacters, setShowOnlyCharacters] = useState(false);
+  const { currentUser } = useAuth();
+  const [stories, setStories] = useState([]);
+  const [mangaStories, setMangaStories] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [viewingManga, setViewingManga] = useState(null);
   
-  // Use URL parameters to set the active tab on mount
+  // Fetch published videos with enhanced logging
   useEffect(() => {
-    // Check if we're at /characters and redirect to /my-stories
-    if (location.pathname === '/characters') {
-      navigate('/my-stories/characters', { replace: true });
-      return;
-    }
-    
-    // Check if we're coming from character creator
-    const fromCharacterCreator = new URLSearchParams(location.search).get('from') === 'character-creator';
-    setShowOnlyCharacters(fromCharacterCreator);
-    
-    // Direct path to characters tab
-    if (location.pathname === '/my-stories/characters') {
-      setActiveTab('characters');
-      return;
-    }
-    
-    // Get tab from URL params if available
-    const tabParam = params.tab;
-    if (tabParam && ['episodes', 'scenes', 'characters'].includes(tabParam)) {
-      setActiveTab(tabParam);
-    }
-  }, [location.pathname, location.search, params.tab, navigate]);
+    const fetchPublishedVideos = async () => {
+      if (!currentUser) return;
+      
+      setLoading(true);
+      console.log("Fetching published videos for user:", currentUser.uid);
+      
+      try {
+        // Query published videos
+        const exportsRef = collection(db, 'publishedVideos');
+        const exportsQuery = query(
+          exportsRef,
+          where("userId", "==", currentUser.uid),
+          orderBy("createdAt", "desc")
+        );
+        
+        console.log("Executing query on publishedVideos collection...");
+        const exportsSnapshot = await getDocs(exportsQuery);
+        console.log(`Found ${exportsSnapshot.docs.length} published videos`);
 
-  // Update URL when tab changes
-  const handleTabChange = (tab) => {
-    setActiveTab(tab);
-    navigate(`/my-stories/${tab}`, { replace: true });
-  };
-
-  // Placeholder data for episodes and characters
-  const episodes = [
-    { 
-      id: 1, 
-      title: 'The Awakening', 
-      thumbnail: episodePlaceholder, 
-      duration: '5:30',
-      status: 'completed',
-      dateCreated: '2023-10-15'
-    },
-    { 
-      id: 2, 
-      title: 'New Horizons', 
-      thumbnail: episodePlaceholder, 
-      duration: '4:45',
-      status: 'completed',
-      dateCreated: '2023-10-20'
-    },
-    { 
-      id: 3, 
-      title: 'The Challenge', 
-      thumbnail: episodePlaceholder, 
-      duration: '6:15',
-      status: 'rendering',
-      dateCreated: '2023-10-28'
-    },
-  ];
+        // Map the data with better handling of potential missing fields
+        const exportedVideos = exportsSnapshot.docs.map(doc => {
+          const data = doc.data();
+          console.log("Video data:", { id: doc.id, ...data });
+          
+          return {
+            id: doc.id,
+            ...data,
+            title: data.title || "Untitled Video",
+            description: data.description || "",
+            thumbnailUrl: data.thumbnailUrl || null,
+            videoUrl: data.videoUrl || null,
+            createdAt: data.createdAt || new Date(),
+            duration: data.duration || 0,
+            source: 'publishedVideos' // Mark the source collection
+          };
+        });
   
-  // Enhanced character data with all the traits we now support
-  const characters = [
-    {
-      id: 1,
-      name: 'Hiro',
-      thumbnail: characterPlaceholder,
-      role: 'Protagonist',
-      episodes: 3,
-      physicalTraits: {
-        race: 'Asian',
-        gender: 'Male',
-        age: 'Teen',
-        height: 'Average',
-        weight: 'Athletic',
-        bodyType: 'Triangle'
-      },
-      facialFeatures: {
-        faceShape: 'Square',
-        skinTone: 'Tan',
-        eyeColor: 'Brown',
-        eyeShape: 'Almond'
-      },
-      hairFeatures: {
-        hairType: 'Straight',
-        hairColor: 'Black',
-        hairLength: 'Medium',
-        hairStyle: 'Messy'
-      },
-      story: { id: 1, name: 'Hero Academy', type: 'anime' }
-    },
-    {
-      id: 2,
-      name: 'Yuki',
-      thumbnail: characterPlaceholder,
-      role: 'Support',
-      episodes: 2,
-      physicalTraits: {
-        race: 'Asian',
-        gender: 'Female',
-        age: 'Teen',
-        height: 'Short',
-        weight: 'Slender',
-        bodyType: 'Hourglass'
-      },
-      facialFeatures: {
-        faceShape: 'Heart',
-        skinTone: 'Fair',
-        eyeColor: 'Blue',
-        eyeShape: 'Round'
-      },
-      hairFeatures: {
-        hairType: 'Straight',
-        hairColor: 'White',
-        hairLength: 'Long',
-        hairStyle: 'Ponytail'
-      },
-      story: { id: 1, name: 'Hero Academy', type: 'anime' }
-    },
-    {
-      id: 3,
-      name: 'Kenta',
-      thumbnail: characterPlaceholder,
-      role: 'Antagonist',
-      episodes: 3,
-      physicalTraits: {
-        race: 'Asian',
-        gender: 'Male',
-        age: 'Young Adult',
-        height: 'Tall',
-        weight: 'Muscular',
-        bodyType: 'Inverted Triangle'
-      },
-      facialFeatures: {
-        faceShape: 'Square',
-        skinTone: 'Tan',
-        eyeColor: 'Amber',
-        eyeShape: 'Hooded'
-      },
-      hairFeatures: {
-        hairType: 'Straight',
-        hairColor: 'Red',
-        hairLength: 'Short',
-        hairStyle: 'Spiky'
-      },
-      story: { id: 3, name: 'Shadow Realm', type: 'anime' }
-    },
-    {
-      id: 4,
-      name: 'Sakura',
-      thumbnail: characterPlaceholder,
-      role: 'Support',
-      episodes: 1,
-      physicalTraits: {
-        race: 'Asian',
-        gender: 'Female',
-        age: 'Teen',
-        height: 'Average',
-        weight: 'Petite',
-        bodyType: 'Hourglass'
-      },
-      facialFeatures: {
-        faceShape: 'Oval',
-        skinTone: 'Fair',
-        eyeColor: 'Green',
-        eyeShape: 'Almond'
-      },
-      hairFeatures: {
-        hairType: 'Straight',
-        hairColor: 'Pink',
-        hairLength: 'Medium',
-        hairStyle: 'Bob'
-      },
-      story: { id: 2, name: 'Mystic Legends', type: 'manga' }
-    },
-  ];
-  
-  const scenes = [
-    {
-      id: 1,
-      title: 'School Entrance',
-      thumbnail: scenePlaceholder,
-      duration: '0:45',
-      dateCreated: '2023-10-14'
-    },
-    {
-      id: 2,
-      title: 'First Encounter',
-      thumbnail: scenePlaceholder,
-      duration: '1:20',
-      dateCreated: '2023-10-16'
-    },
-    {
-      id: 3,
-      title: 'Training Montage',
-      thumbnail: scenePlaceholder,
-      duration: '2:10',
-      dateCreated: '2023-10-18'
-    },
-    {
-      id: 4,
-      title: 'Final Battle',
-      thumbnail: scenePlaceholder,
-      duration: '3:05',
-      dateCreated: '2023-10-25'
-    },
-  ];
+        // Also try to fetch from animeProjects collection - using a simpler query
+        try {
+          console.log("Also checking animeProjects collection for published videos...");
+          const animeProjectsRef = collection(db, 'animeProjects');
+          
+          // Use a simpler query that doesn't require a composite index
+          const simpleQuery = query(
+            animeProjectsRef,
+            where("userId", "==", currentUser.uid)
+          );
+          
+          const projectsSnapshot = await getDocs(simpleQuery);
+          console.log(`Found ${projectsSnapshot.docs.length} total projects, filtering for published ones...`);
+          
+          // More flexible filtering to handle various "true" formats
+          const publishedProjects = projectsSnapshot.docs
+            .map(doc => {
+              const data = doc.data();
+              console.log(`Project ${doc.id} isPublished:`, data.isPublished, typeof data.isPublished);
+              return {
+                id: doc.id,
+                ...data
+              };
+            })
+            .filter(project => {
+              // Check for any representation of "true" (boolean true, string "true", or 1)
+              const isPublished = 
+                project.isPublished === true || 
+                project.isPublished === "true" || 
+                project.isPublished === 1;
+              
+              // Also consider it published if it has a publishedAt timestamp or videoUrl
+              const hasPublishedAttributes = 
+                project.publishedAt || 
+                project.videoUrl;
+                
+              const shouldInclude = isPublished || hasPublishedAttributes;
+              console.log(`Project ${project.id} publish status check: ${shouldInclude} (isPublished=${project.isPublished}, hasAttributes=${!!hasPublishedAttributes})`);
+              return shouldInclude;
+            })
+            // Sort manually since we can't use orderBy in the query
+            .sort((a, b) => {
+              const dateA = a.updatedAt?.toDate?.() || new Date(a.updatedAt || a.publishedAt || 0);
+              const dateB = b.updatedAt?.toDate?.() || new Date(b.updatedAt || b.publishedAt || 0);
+              return dateB - dateA; // descending order
+            })
+            .map(data => {
+              return {
+                id: data.id,
+                ...data,
+                title: data.title || "Untitled Project",
+                description: data.description || "",
+                thumbnailUrl: data.thumbnailUrl || null,
+                videoUrl: data.videoUrl || null,
+                createdAt: data.publishedAt || data.createdAt || data.updatedAt || new Date(),
+                duration: data.duration || 0,
+                source: 'animeProject' // Mark the source collection
+              };
+            });
+          
+          console.log(`Found ${publishedProjects.length} published projects after filtering`);
+          
+          // Combine both sources
+          const allPublished = [...exportedVideos, ...publishedProjects];
+          console.log("Combined published videos:", allPublished.length);
+          setStories(allPublished);
+        } catch (projectError) {
+          console.error("Error fetching published projects:", projectError);
+          // Still set the exported videos we found
+          setStories(exportedVideos);
+        }
+      } catch (err) {
+        console.error("Error fetching published videos:", err);
+        console.error("Error details:", err.code, err.message);
+        setError("Failed to load your published videos. Please try again later.");
+        toast.error("Failed to load published videos");
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchPublishedVideos();
+  }, [currentUser]);
 
-  // Mock data for stories
-  const stories = [
-    { 
-      id: 1, 
-      title: 'Hero Academy', 
-      thumbnail: episodePlaceholder, 
-      type: 'anime',
-      episodes: 3,
-      dateCreated: '2023-10-15',
-      description: 'A story about young heroes learning to harness their powers'
-    },
-    { 
-      id: 2, 
-      title: 'Mystic Legends', 
-      thumbnail: episodePlaceholder, 
-      type: 'manga',
-      episodes: 2,
-      dateCreated: '2023-10-20',
-      description: 'A fantasy manga about ancient powers and modern conflicts'
-    },
-    { 
-      id: 3, 
-      title: 'Shadow Realm', 
-      thumbnail: episodePlaceholder, 
-      type: 'anime',
-      episodes: 1,
-      dateCreated: '2023-10-28',
-      description: 'A dark tale of revenge and redemption'
-    },
-  ];
-
-  // Function to edit a character
-  const editCharacter = (characterId) => {
-    navigate(`/character-creator?edit=${characterId}`);
-  };
-
-  // Function to toggle character details view
-  const toggleCharacterDetails = (characterId) => {
-    if (expandedCharacter === characterId) {
-      setExpandedCharacter(null);
-    } else {
-      setExpandedCharacter(characterId);
-    }
-  };
+  // Update useEffect to fetch manga projects too
+  useEffect(() => {
+    const fetchPublishedContent = async () => {
+      if (!currentUser) return;
+      
+      setLoading(true);
+      console.log("Fetching published content for user:", currentUser.uid);
+      
+      try {
+        // ... existing code for fetching publishedVideos and animeProjects ...
+        
+        // Fetch manga projects
+        try {
+          console.log("Fetching manga projects...");
+          const mangaProjectsRef = collection(db, 'mangaProjects');
+          
+          const mangaQuery = query(
+            mangaProjectsRef,
+            where("userId", "==", currentUser.uid)
+          );
+          
+          const mangaSnapshot = await getDocs(mangaQuery);
+          console.log(`Found ${mangaSnapshot.docs.length} manga projects`);
+          
+          // Map manga projects - all manga projects are considered "published" for now
+          const publishedManga = mangaSnapshot.docs
+            .map(doc => {
+              const data = doc.data();
+              return {
+                id: doc.id,
+                ...data,
+                title: data.title || "Untitled Manga",
+                description: data.description || "",
+                pages: Array.isArray(data.pages) ? data.pages : 
+                       (typeof data.pages === 'string' ? JSON.parse(data.pages) : []),
+                author: data.author || "Anonymous",
+                genre: data.genre || "",
+                thumbnail: data.thumbnail || null,
+                contentType: 'manga'
+              };
+            })
+            .sort((a, b) => {
+              const dateA = a.lastEdited?.toDate?.() || new Date(a.lastEdited || 0);
+              const dateB = b.lastEdited?.toDate?.() || new Date(b.lastEdited || 0);
+              return dateB - dateA; // descending order
+            });
+          
+          console.log(`Processed ${publishedManga.length} manga projects`);
+          setMangaStories(publishedManga);
+        } catch (mangaError) {
+          console.error("Error fetching manga projects:", mangaError);
+        }
+      } catch (err) {
+        console.error("Error fetching published content:", err);
+        setError("Failed to load your published content. Please try again later.");
+        toast.error("Failed to load published content");
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchPublishedContent();
+  }, [currentUser]);
 
   // Function to handle image load errors
   const handleImageError = (e) => {
@@ -271,211 +210,295 @@ const MyStoriesPage = () => {
     e.target.src = fallbackImage;
     e.target.onerror = null; // Prevent infinite loop
   };
+  
+  // Function to play a published video
+  const playVideo = (story) => {
+    if (story.videoUrl) {
+      // Open the video in a new tab
+      window.open(story.videoUrl, '_blank');
+      console.log("Opening video URL:", story.videoUrl);
+    } else {
+      console.warn("No video URL found for this story:", story);
+      toast.error("Video URL not found");
+    }
+  };
+  
+  // Function to delete a published video
+  const deleteVideo = async (story) => {
+    if (!window.confirm(`Are you sure you want to delete "${story.title}"? This action cannot be undone.`)) {
+      return;
+    }
+    
+    try {
+      console.log("Deleting video:", story.id);
+      // Check which collection the video is in
+      const collectionName = story.source === 'animeProject' ? 'animeProjects' : 'publishedVideos';
+      await deleteDoc(doc(db, collectionName, story.id));
+      
+      // Update UI
+      setStories(prevStories => prevStories.filter(s => s.id !== story.id));
+      toast.success("Video deleted successfully");
+    } catch (err) {
+      console.error("Error deleting video:", err);
+      toast.error("Failed to delete video");
+    }
+  };
+  
+  // Helper function to format dates
+  const formatDate = (timestamp) => {
+    if (!timestamp) return 'Unknown date';
+    
+    try {
+      const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+      return date.toLocaleDateString();
+    } catch (err) {
+      console.error("Error formatting date:", err);
+      return 'Unknown date';
+    }
+  };
+  
+  // Helper function to format duration
+  const formatDuration = (seconds) => {
+    if (!seconds || isNaN(seconds)) return '0:00';
+    
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Add function to view a manga
+  const viewManga = (manga) => {
+    console.log("Viewing manga:", manga);
+    setViewingManga(manga);
+  };
+
+  // Add function to go back from manga view
+  const exitMangaView = () => {
+    setViewingManga(null);
+  };
+
+  // Add function to delete manga
+  const deleteManga = async (manga) => {
+    if (!window.confirm(`Are you sure you want to delete "${manga.title}"? This action cannot be undone.`)) {
+      return;
+    }
+    
+    try {
+      console.log("Deleting manga:", manga.id);
+      await deleteDoc(doc(db, 'mangaProjects', manga.id));
+      
+      // Update UI
+      setMangaStories(prevManga => prevManga.filter(m => m.id !== manga.id));
+      toast.success("Manga deleted successfully");
+    } catch (err) {
+      console.error("Error deleting manga:", err);
+      toast.error("Failed to delete manga");
+    }
+  };
+
+  // If viewing manga, show the manga viewer
+  if (viewingManga) {
+    return (
+      <>
+        <button 
+          onClick={exitMangaView}
+          className="fixed top-4 left-4 z-50 bg-gray-800 p-2 rounded-full shadow-lg text-white"
+          title="Back to My Stories"
+        >
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+          </svg>
+        </button>
+        <MangaViewer manga={viewingManga} />
+      </>
+    );
+  }
+
+  // Render loading state
+  if (loading) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 text-center">
+        <div className="animate-pulse flex flex-col items-center">
+          <div className="h-8 w-64 bg-gray-700 rounded mb-4"></div>
+          <div className="h-4 w-48 bg-gray-700 rounded mb-8"></div>
+          <div className="grid grid-cols-3 gap-6 w-full">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="h-64 bg-gray-800 rounded"></div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show error state if there was an error
+  if (error) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-extrabold text-white sm:text-4xl">
+            My Published Videos
+          </h1>
+        </div>
+        <div className="bg-red-900 bg-opacity-50 text-white p-4 rounded-lg">
+          <p>{error}</p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
       <div className="text-center mb-8">
         <h1 className="text-3xl font-extrabold text-white sm:text-4xl">
-          {showOnlyCharacters ? 'My Characters' : 'My Anime Stories'}
+          My Published Content
         </h1>
         <p className="mt-3 max-w-2xl mx-auto text-xl text-gray-400 sm:mt-4">
-          {showOnlyCharacters ? 'Manage your custom characters' : 'Manage your anime and manga stories'}
+          View your published anime videos and manga stories
         </p>
       </div>
       
-      {/* Show normal tabs only when accessing from character creator */}
-      {showOnlyCharacters ? (
-        // Only show a header for characters-only mode
-        <div className="border-b border-gray-700 mb-8 pb-2">
-          <h2 className="text-xl font-bold text-white">My Characters</h2>
+      {/* Manga Stories Section */}
+      {mangaStories.length > 0 && (
+        <div className="mb-12">
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-xl font-bold text-white">Your Manga Stories</h2>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {mangaStories.map(manga => (
+              <div key={manga.id} className="card overflow-hidden">
+                <div 
+                  className="w-full h-48 bg-gray-800 cursor-pointer flex items-center justify-center overflow-hidden"
+                  onClick={() => viewManga(manga)}
+                >
+                  {manga.thumbnail ? (
+                    <img 
+                      src={manga.thumbnail} 
+                      alt={manga.title} 
+                      className="w-full h-full object-cover" 
+                      onError={handleImageError}
+                    />
+                  ) : (
+                    <div className="text-center">
+                      <svg className="w-16 h-16 mx-auto text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                      </svg>
+                      <p className="text-gray-400 mt-2">{manga.title}</p>
+                    </div>
+                  )}
+                </div>
+                <div className="p-4">
+                  <h3 className="text-lg font-medium text-white">{manga.title}</h3>
+                  <p className="text-sm text-gray-400 mt-1">{manga.description || 'No description'}</p>
+                  <p className="text-xs text-gray-500 mt-2">
+                    By {manga.author} • {manga.genre ? `${manga.genre} • ` : ''}
+                    {manga.pages?.length || 0} pages
+                  </p>
+                  
+                  <div className="mt-4 flex justify-between">
+                    <button 
+                      className="text-indigo-400 hover:text-indigo-300 text-sm"
+                      onClick={() => viewManga(manga)}
+                    >
+                      Read Manga
+                    </button>
+                    <button 
+                      className="text-red-400 hover:text-red-300 text-sm"
+                      onClick={() => deleteManga(manga)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
-      ) : (
-        // For regular My Stories view, show stories list
+      )}
+      
+      {/* Videos Section - existing code */}
+      {stories.length > 0 && (
         <div>
           <div className="flex justify-between items-center mb-6">
-            <h2 className="text-xl font-bold text-white">Your Stories</h2>
-            <div>
-              <Link to="/manga-studio" className="btn-primary text-sm mr-2">
-                Manga Studio
-              </Link>
-              <Link to="/anime-studio" className="btn-secondary text-sm">
-                Anime Studio
-              </Link>
-            </div>
+            <h2 className="text-xl font-bold text-white">Your Videos</h2>
           </div>
           
           {stories.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {stories.map(story => (
                 <div key={story.id} className="card overflow-hidden">
-                  <img src={story.thumbnail} alt={story.title} className="w-full h-48 object-cover" onError={handleImageError} />
+                <img 
+                  src={story.thumbnailUrl || fallbackImage} 
+                  alt={story.title || 'Untitled'} 
+                  className="w-full h-48 object-cover cursor-pointer" 
+                  onError={handleImageError}
+                  onClick={() => playVideo(story)}
+                />
                   <div className="p-4">
                     <div className="flex justify-between">
-                      <h3 className="text-lg font-medium text-white">{story.title}</h3>
+                    <h3 className="text-lg font-medium text-white">{story.title || 'Untitled'}</h3>
+                    {story.duration && (
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
-                        {story.type}
+                        {formatDuration(story.duration)}
                       </span>
+                    )}
                     </div>
-                    <p className="text-sm text-gray-400 mt-1">{story.description}</p>
+                  <p className="text-sm text-gray-400 mt-1">{story.description || 'No description'}</p>
                     <p className="text-xs text-gray-500 mt-2">
-                      <span>{story.episodes} episode{story.episodes !== 1 ? 's' : ''}</span>
-                      <span className="mx-2">•</span>
-                      <span>Created: {story.dateCreated}</span>
+                    <span>Published: {formatDate(story.createdAt)}</span>
                     </p>
                     
                     <div className="mt-4 flex justify-between">
-                      <button className="text-indigo-400 hover:text-indigo-300 text-sm">View</button>
-                      <button className="text-indigo-400 hover:text-indigo-300 text-sm">Edit</button>
-                      <button className="text-red-400 hover:text-red-300 text-sm">Delete</button>
+                      <button 
+                        className="text-indigo-400 hover:text-indigo-300 text-sm"
+                      onClick={() => playVideo(story)}
+                      disabled={!story.videoUrl}
+                      >
+                      Play Video
+                      </button>
+                      <button 
+                      className="text-red-400 hover:text-red-300 text-sm"
+                      onClick={() => deleteVideo(story)}
+                      >
+                      Delete
+                        </button>
+                      </div>
                     </div>
-                  </div>
                 </div>
               ))}
             </div>
           ) : (
             <div className="text-center py-12 bg-gray-800 rounded-lg">
               <svg className="mx-auto h-12 w-12 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
-              <h3 className="mt-2 text-sm font-medium text-white">No stories yet</h3>
-              <p className="mt-1 text-sm text-gray-400">Get started by creating a new anime or manga story</p>
-              <div className="mt-6">
-                <Link to="/manga-studio" className="btn-primary mr-4">
-                  Manga Studio
-                </Link>
-                <Link to="/anime-studio" className="btn-secondary">
-                  Anime Studio
-                </Link>
+            <h3 className="mt-2 text-sm font-medium text-white">No published videos yet</h3>
+            <p className="mt-1 text-sm text-gray-400">Create a video in the Anime Studio and publish it</p>
+            <div className="mt-4">
+              <pre className="bg-gray-700 p-4 rounded-lg text-xs text-left overflow-auto max-w-md mx-auto">
+                Debug info: {JSON.stringify({uid: currentUser?.uid}, null, 2)}
+              </pre>
               </div>
             </div>
           )}
         </div>
       )}
       
-      {/* Characters Tab - Only show when in characters-only mode */}
-      {showOnlyCharacters && (
-        <div>
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-xl font-bold text-white">My Characters</h2>
-            <Link to="/character-creator" className="btn-primary px-5 py-3 text-md font-medium">
-              Create New Character
-            </Link>
-          </div>
-          
-          {characters.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {characters.map(character => (
-                <div key={character.id} className={`card text-center overflow-hidden transition-all duration-300 ${expandedCharacter === character.id ? 'col-span-full' : ''}`}>
-                  <div className="flex flex-col md:flex-row items-center p-4">
-                    <div className="w-24 h-24 rounded-full overflow-hidden flex-shrink-0">
-                      <img src={character.thumbnail} alt={character.name} className="w-full h-full object-cover" onError={handleImageError} />
-                    </div>
-                    
-                    <div className="md:ml-6 mt-4 md:mt-0 flex-grow text-left">
-                      <h3 className="text-xl font-medium text-white">{character.name}</h3>
-                      <div className="flex flex-wrap mt-2">
-                        <span className="px-2 py-1 text-xs bg-indigo-900 text-indigo-300 rounded-full mr-2 mb-2">
-                          {character.role}
-                        </span>
-                        <span className="px-2 py-1 text-xs bg-gray-800 text-gray-300 rounded-full mr-2 mb-2">
-                          {character.physicalTraits.gender}
-                        </span>
-                        <span className="px-2 py-1 text-xs bg-gray-800 text-gray-300 rounded-full mr-2 mb-2">
-                          {character.physicalTraits.age}
-                        </span>
-                        <span className="px-2 py-1 text-xs bg-gray-800 text-gray-300 rounded-full mr-2 mb-2">
-                          {character.hairFeatures.hairColor} Hair
-                        </span>
-                      </div>
-                      {character.story && (
-                        <p className="text-sm text-gray-400 mt-1">
-                          Belongs to: <span className="text-indigo-400">{character.story.name}</span> ({character.story.type})
-                        </p>
-                      )}
-                      <p className="text-xs text-gray-500 mt-1">Used in {character.episodes} episodes</p>
-                    </div>
-                    
-                    <div className="flex md:flex-col space-x-4 md:space-x-0 md:space-y-2 mt-4 md:mt-0">
-                      <button 
-                        onClick={() => editCharacter(character.id)}
-                        className="text-indigo-400 hover:text-indigo-300 text-sm"
-                      >
-                        Edit
-                      </button>
-                      <button 
-                        onClick={() => toggleCharacterDetails(character.id)}
-                        className="text-indigo-400 hover:text-indigo-300 text-sm"
-                      >
-                        {expandedCharacter === character.id ? 'Hide Details' : 'View Details'}
-                      </button>
-                      <button className="text-red-400 hover:text-red-300 text-sm">Delete</button>
-                    </div>
-                  </div>
-                  
-                  {/* Expanded character details */}
-                  {expandedCharacter === character.id && (
-                    <div className="px-4 pb-4 mt-2 border-t border-gray-700 pt-4">
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-left">
-                        <div>
-                          <h4 className="font-medium text-indigo-400 mb-2">Physical Traits</h4>
-                          <ul className="text-sm text-gray-300 space-y-1">
-                            <li><span className="text-gray-500">Race:</span> {character.physicalTraits.race}</li>
-                            <li><span className="text-gray-500">Gender:</span> {character.physicalTraits.gender}</li>
-                            <li><span className="text-gray-500">Age:</span> {character.physicalTraits.age}</li>
-                            <li><span className="text-gray-500">Height:</span> {character.physicalTraits.height}</li>
-                            <li><span className="text-gray-500">Weight/Build:</span> {character.physicalTraits.weight}</li>
-                            <li><span className="text-gray-500">Body Type:</span> {character.physicalTraits.bodyType}</li>
-                          </ul>
-                        </div>
-                        
-                        <div>
-                          <h4 className="font-medium text-indigo-400 mb-2">Facial Features</h4>
-                          <ul className="text-sm text-gray-300 space-y-1">
-                            <li><span className="text-gray-500">Face Shape:</span> {character.facialFeatures.faceShape}</li>
-                            <li><span className="text-gray-500">Skin Tone:</span> {character.facialFeatures.skinTone}</li>
-                            <li><span className="text-gray-500">Eye Color:</span> {character.facialFeatures.eyeColor}</li>
-                            <li><span className="text-gray-500">Eye Shape:</span> {character.facialFeatures.eyeShape}</li>
-                          </ul>
-                        </div>
-                        
-                        <div>
-                          <h4 className="font-medium text-indigo-400 mb-2">Hair</h4>
-                          <ul className="text-sm text-gray-300 space-y-1">
-                            <li><span className="text-gray-500">Hair Type:</span> {character.hairFeatures.hairType}</li>
-                            <li><span className="text-gray-500">Hair Color:</span> {character.hairFeatures.hairColor}</li>
-                            <li><span className="text-gray-500">Hair Length:</span> {character.hairFeatures.hairLength}</li>
-                            <li><span className="text-gray-500">Hair Style:</span> {character.hairFeatures.hairStyle}</li>
-                          </ul>
-                        </div>
-                      </div>
-                      
-                      <div className="mt-4 flex justify-end">
-                        <button 
-                          className="btn-secondary text-xs"
-                          onClick={() => navigate(`/character-creator?edit=${character.id}`)}
-                        >
-                          Edit Character Details
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-12 bg-gray-800 rounded-lg">
-              <svg className="mx-auto h-12 w-12 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-              </svg>
-              <h3 className="mt-2 text-sm font-medium text-white">No characters yet</h3>
-              <p className="mt-1 text-sm text-gray-400">Get started by creating a new character</p>
-              <div className="mt-6">
-                <Link to="/character-creator" className="btn-primary">
-                  Create New Character
-                </Link>
-              </div>
-            </div>
-          )}
+      {/* Empty state if no content */}
+      {stories.length === 0 && mangaStories.length === 0 && (
+        <div className="text-center py-12 bg-gray-800 rounded-lg">
+          <svg className="mx-auto h-12 w-12 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+          <h3 className="mt-2 text-sm font-medium text-white">No published content yet</h3>
+          <p className="mt-1 text-sm text-gray-400">Create content in the Anime Studio or Manga Studio and publish it</p>
         </div>
       )}
     </div>

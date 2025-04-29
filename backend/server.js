@@ -689,13 +689,18 @@ const PORT = process.env.PORT || 5001;
 
 // Configure CORS properly
 const corsOptions = {
-  origin: '*', // In production, restrict to your frontend domain
+  origin: ['http://localhost:3001', 'https://naruyo-6bf58.firebaseapp.com', '*'], // Add your domains
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
   credentials: true,
-  exposedHeaders: ['Content-Length', 'Content-Type']
+  exposedHeaders: ['Content-Length', 'Content-Type'],
+  // Prevent headers that break OAuth flows
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 };
 
 app.use(cors(corsOptions));
+
+// Add explicit preflight handling for all routes
+app.options('*', cors(corsOptions));
 
 // Middleware
 app.use(express.json({ limit: '50mb' }));
@@ -717,15 +722,34 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-// Serve static files
-app.use('/outputs', express.static(path.join(__dirname, 'outputs'), {
-  setHeaders: (res) => {
-    res.set('Access-Control-Allow-Origin', '*');
-    res.set('Cross-Origin-Resource-Policy', 'cross-origin');
-    res.set('Content-Type', 'video/mp4'); // Set proper content type for videos
+// Helper function to set CORS headers for static files
+const setCORSHeaders = (res) => {
+  // Allow cross-origin resource sharing
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  // Remove this restrictive header as it breaks OAuth flows
+  // res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  
+  // Detect content type for different file extensions
+  const url = res.req.url;
+  if (url.endsWith('.mp4') || url.endsWith('.webm')) {
+    res.setHeader('Content-Type', 'video/mp4');
+  } else if (url.endsWith('.mp3') || url.endsWith('.wav')) {
+    res.setHeader('Content-Type', 'audio/mpeg');
   }
-}));
-app.use(express.static(path.join(__dirname, 'public')));
+};
+
+// Serve output files with proper CORS headers
+app.use('/outputs', (req, res, next) => {
+  setCORSHeaders(res);
+  next();
+}, express.static(path.join(__dirname, 'outputs')));
+
+// Also apply CORS headers to public files
+app.use((req, res, next) => {
+  setCORSHeaders(res);
+  next();
+}, express.static(path.join(__dirname, 'public')));
 
 // Create directory for outputs
 const outputsDir = path.join(__dirname, 'public', 'outputs');
@@ -2129,6 +2153,38 @@ const USE_CLOUDINARY = process.env.CLOUDINARY_CLOUD_NAME &&
 
 console.log(`Cloudinary integration: ${USE_CLOUDINARY ? 'ENABLED' : 'DISABLED'}`);
 
+// Add this near the top of your Express app setup, before your routes
+
+// Set up global CORS and COEP-related headers
+app.use((req, res, next) => {
+  // Standard CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  
+  // Headers necessary for COEP compatibility
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.status(204).send();
+  }
+  next();
+});
+
+// CORS setup for Cross-Origin Isolation (needed for SharedArrayBuffer and FFmpeg)
+app.use((req, res, next) => {
+  res.header('Cross-Origin-Embedder-Policy', 'require-corp');
+  res.header('Cross-Origin-Opener-Policy', 'same-origin');
+  res.header('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  next();
+});
+
+// Rest of your server code...
+
 // Start server directly on port 5001 - no retry mechanism
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}, bound to all interfaces`);
@@ -2579,5 +2635,257 @@ app.get('/audio/:filename', (req, res) => {
     // Create read stream and pipe to response
     const fileStream = fs.createReadStream(audioPath);
     fileStream.pipe(res);
+  }
+});
+
+// Create a proxy endpoint for audio files (especially Jamendo)
+app.get('/api/proxy-audio', async (req, res) => {
+  try {
+    const { url } = req.query;
+    
+    if (!url) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Missing URL parameter' 
+      });
+    }
+    
+    console.log(`Audio proxy request received for: ${url}`);
+    
+    // Add proper request headers to avoid CORS
+    const headers = {
+      'User-Agent': 'MangaStudio/1.0',
+      'Referer': 'https://www.jamendo.com/',
+      'Origin': 'https://www.jamendo.com'
+    };
+    
+    // Use axios to fetch the audio file
+    const response = await axios({
+      method: 'get',
+      url: decodeURIComponent(url),
+      responseType: 'stream',
+      headers: headers,
+      timeout: 30000 // 30 seconds timeout
+    });
+    
+    // Set response headers
+    res.set({
+      'Content-Type': response.headers['content-type'] || 'audio/mpeg',
+      'Content-Length': response.headers['content-length'],
+      'Accept-Ranges': 'bytes',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+      'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept, Range',
+      'Cache-Control': 'public, max-age=2592000', // Cache for 30 days
+      'X-Content-Type-Options': 'nosniff'
+    });
+    
+    // Pipe the audio data directly to the response
+    response.data.pipe(res);
+    
+    // Handle errors during streaming
+    response.data.on('error', (err) => {
+      console.error('Error streaming audio data:', err);
+      // Only send error if headers haven't been sent yet
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          success: false, 
+          error: 'Error streaming audio data' 
+        });
+      } else {
+        res.end();
+      }
+    });
+  } catch (error) {
+    console.error('Error in audio proxy:', error);
+    
+    // Send detailed error for debugging
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      code: error.code || 'UNKNOWN_ERROR'
+    });
+  }
+});
+
+// Audio proxy endpoint with enhanced CORS headers for COEP compatibility
+app.get('/api/proxy-audio', async (req, res) => {
+  // Set ALL possible CORS and COEP-related headers for maximum compatibility
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+  
+  try {
+    const url = req.query.url;
+    if (!url) {
+      return res.status(400).json({ success: false, message: 'URL parameter is required' });
+    }
+    
+    console.log(`Proxying audio from: ${url}`);
+    
+    // Fetch the audio file
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
+    });
+    
+    if (!response.ok) {
+      console.error(`Error fetching audio: ${response.status} ${response.statusText}`);
+      return res.status(response.status).json({ 
+        success: false, 
+        message: `Error fetching audio: ${response.status} ${response.statusText}` 
+      });
+    }
+    
+    // Get content-type and other headers from original response
+    const contentType = response.headers.get('content-type') || 'audio/mpeg';
+    const contentLength = response.headers.get('content-length');
+    
+    // Set content headers
+    res.setHeader('Content-Type', contentType);
+    if (contentLength) {
+      res.setHeader('Content-Length', contentLength);
+    }
+    
+    // Get the audio data as array buffer
+    const arrayBuffer = await response.arrayBuffer();
+    
+    // Send the audio data
+    res.status(200).send(Buffer.from(arrayBuffer));
+    
+  } catch (error) {
+    console.error('Error in audio proxy:', error);
+    res.status(500).json({ success: false, message: `Proxy error: ${error.message}` });
+  }
+});
+
+// Add a generic media proxy endpoint to handle CORS issues
+app.get('/api/proxy-media', async (req, res) => {
+  try {
+    const url = req.query.url;
+    if (!url) {
+      return res.status(400).send({ success: false, message: "URL parameter is required" });
+    }
+    
+    console.log(`Proxying media from: ${url}`);
+    
+    // Add all required headers for CORS and Cross-Origin isolation
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    
+    // Fetch with timeout to prevent hanging requests
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+    
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        console.error(`Error fetching from ${url}: ${response.status} ${response.statusText}`);
+        return res.status(response.status).send({ 
+          success: false, 
+          message: `Upstream error: ${response.status} ${response.statusText}` 
+        });
+      }
+      
+      // Get content type from response and set it in our response
+      const contentType = response.headers.get('content-type');
+      if (contentType) {
+        res.setHeader('Content-Type', contentType);
+      }
+      
+      // Get content length and set it if available
+      const contentLength = response.headers.get('content-length');
+      if (contentLength) {
+        res.setHeader('Content-Length', contentLength);
+      }
+      
+      // Pipe the original response directly to our response
+      const buffer = await response.arrayBuffer();
+      res.send(Buffer.from(buffer));
+    } catch (fetchError) {
+      console.error(`Error in media proxy for ${url}:`, fetchError);
+      return res.status(500).send({ 
+        success: false, 
+        message: fetchError.name === 'AbortError' 
+          ? 'Request timed out' 
+          : `Fetch error: ${fetchError.message}` 
+      });
+    }
+  } catch (error) {
+    console.error(`Error in media proxy:`, error);
+    res.status(500).send({ success: false, message: error.message });
+  }
+});
+
+// Keep the original proxy-audio endpoint for backward compatibility
+app.get('/api/proxy-audio', async (req, res) => {
+  try {
+    const url = req.query.url;
+    if (!url) {
+      return res.status(400).send({ success: false, message: "URL parameter is required" });
+    }
+    
+    console.log(`Proxying audio from: ${url}`);
+    
+    // Add all required headers for CORS and Cross-Origin isolation
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    
+    // Fetch with timeout to prevent hanging requests
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+    
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        console.error(`Error fetching from ${url}: ${response.status} ${response.statusText}`);
+        return res.status(response.status).send({ 
+          success: false, 
+          message: `Upstream error: ${response.status} ${response.statusText}` 
+        });
+      }
+      
+      // Get content type from response and set it in our response
+      const contentType = response.headers.get('content-type');
+      if (contentType) {
+        res.setHeader('Content-Type', contentType);
+      }
+      
+      // Get content length and set it if available
+      const contentLength = response.headers.get('content-length');
+      if (contentLength) {
+        res.setHeader('Content-Length', contentLength);
+      }
+      
+      // Send the audio data
+      const buffer = await response.arrayBuffer();
+      res.send(Buffer.from(buffer));
+    } catch (fetchError) {
+      console.error(`Error in audio proxy for ${url}:`, fetchError);
+      return res.status(500).send({ 
+        success: false, 
+        message: fetchError.name === 'AbortError' 
+          ? 'Request timed out' 
+          : `Fetch error: ${fetchError.message}` 
+      });
+    }
+  } catch (error) {
+    console.error(`Error in audio proxy:`, error);
+    res.status(500).send({ success: false, message: error.message });
   }
 });
