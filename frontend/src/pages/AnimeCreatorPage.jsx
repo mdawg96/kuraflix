@@ -381,6 +381,10 @@ const AnimeCreatorPage = () => {
         }
       });
 
+      // Create a timestamp for "last saved"
+      const saveTime = new Date();
+      const saveTimeISO = saveTime.toISOString();
+
       // Prepare project data
       const projectData = {
         title: storyTitle,
@@ -390,7 +394,8 @@ const AnimeCreatorPage = () => {
         scenes: JSON.stringify(scenesToSave),
         thumbnailUrl: currentProject?.thumbnailUrl || '',
         userId: user.uid,
-        lastModified: new Date().toISOString()
+        lastModified: saveTimeISO,
+        lastSaved: saveTimeISO // Add human-readable timestamp for UI feedback
       };
 
       console.log("Saving project data:", projectData);
@@ -411,7 +416,8 @@ const AnimeCreatorPage = () => {
           setCurrentProject({
             ...currentProject,
             ...projectData,
-            lastModified: new Date().toISOString()
+            lastModified: saveTimeISO,
+            lastSaved: saveTimeISO
           });
           
           return updateResult.data;
@@ -425,7 +431,7 @@ const AnimeCreatorPage = () => {
       else {
         console.log("Creating new project");
         // Add created timestamp for new projects
-        projectData.created = new Date().toISOString();
+        projectData.created = saveTimeISO;
         
         const createResult = await firestoreService.createProject(projectData);
         
@@ -437,7 +443,8 @@ const AnimeCreatorPage = () => {
           setCurrentProject({
             ...projectData,
             id: createResult.data,
-            created: projectData.created
+            created: saveTimeISO,
+            lastSaved: saveTimeISO
           });
           
           // Update URL to include the new project ID
@@ -1682,6 +1689,57 @@ The scene should have a strong sense of narrative and emotional impact. Characte
     }
   }, [location.search, projectList, showProjectSelector, isCreatingProject]);
   
+  // Add publish functionality with timestamp tracking
+  const publishAnime = async () => {
+    try {
+      setLoading(true);
+      
+      // Ensure project is saved first
+      if (!currentProject?.id) {
+        const projectId = await saveProject();
+        if (!projectId) {
+          throw new Error("Failed to save project before publishing");
+        }
+      }
+      
+      // Create publish timestamp
+      const publishTime = new Date();
+      const publishTimeISO = publishTime.toISOString();
+      
+      // Mark the project as published in Firestore
+      const updateResult = await firestoreService.updateProject(
+        currentProject.id, 
+        {
+          published: true,
+          publishedAt: publishTimeISO,
+          lastPublished: publishTimeISO
+        }
+      );
+      
+      if (updateResult.success) {
+        // Update local state
+        setCurrentProject({
+          ...currentProject,
+          published: true,
+          publishedAt: publishTimeISO,
+          lastPublished: publishTimeISO
+        });
+        
+        toast.success(`Anime "${storyTitle}" published successfully!`);
+        
+        // Navigate to my stories page
+        navigate('/my-stories');
+      } else {
+        throw new Error(updateResult.error || "Failed to publish anime");
+      }
+    } catch (error) {
+      console.error("Error publishing anime:", error);
+      toast.error(`Failed to publish anime: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
   // Render the main component
   return (
     <div className="anime-creator-page">
@@ -1692,7 +1750,6 @@ The scene should have a strong sense of narrative and emotional impact. Characte
           <TimelineEditor
             scenes={scenes}
             currentScene={currentScene}
-            setCurrentScene={setCurrentScene}
             selectedClip={selectedClip}
             onClipClick={handleClipClick}
             onAddScene={addNewScene}
@@ -1711,6 +1768,7 @@ The scene should have a strong sense of narrative and emotional impact. Characte
             onShowPublishModal={() => setShowPublishModal(true)}
             onDeleteClip={deleteClip}
             onSaveProject={saveProject}
+            currentProject={currentProject} // Add currentProject for save/publish status
           />
           
           {showClipEditor && (
@@ -1745,80 +1803,66 @@ The scene should have a strong sense of narrative and emotional impact. Characte
             </div>
           )}
         
+          {/* Publish Modal */}
           {showPublishModal && (
-            <div className="fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-75">
-              <div className="max-w-md w-full bg-gray-800 rounded-lg shadow-xl">
-                <div className="p-4 border-b border-gray-700 flex justify-between items-center">
-                  <h2 className="text-xl font-bold text-white">Export Animation</h2>
-                  <button
-                    onClick={() => setShowPublishModal(false)}
-                    className="text-gray-400 hover:text-white"
-                  >
-                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-75">
+              <div className="bg-gray-800 rounded-lg w-full max-w-lg overflow-hidden shadow-xl">
                 <div className="p-6">
-                  <div className="space-y-4">
-                      <div>
-                      <label className="block text-gray-400 text-sm mb-1">Title</label>
-                      <input
-                        type="text"
-                        value={storyTitle}
-                        onChange={(e) => setStoryTitle(e.target.value)}
-                        className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2"
-                      />
-                              </div>
-                    <div>
-                      <label className="block text-gray-400 text-sm mb-1">Genre</label>
-                          <select
-                        value={genre}
-                        onChange={(e) => setGenre(e.target.value)}
-                        className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2"
-                      >
-                        <option value="">Select Genre</option>
-                        <option value="action">Action</option>
-                        <option value="comedy">Comedy</option>
-                        <option value="drama">Drama</option>
-                        <option value="fantasy">Fantasy</option>
-                        <option value="scifi">Sci-Fi</option>
-                          </select>
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-white text-xl font-bold">Publish Animation</h3>
+                    <button 
+                      onClick={() => setShowPublishModal(false)}
+                      className="text-gray-400 hover:text-white"
+                    >
+                      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                  
+                  <p className="text-gray-300 mb-4">
+                    Publishing your anime will make it visible to others on the home page. Are you sure you're ready to publish?
+                  </p>
+                  
+                  <div className="bg-gray-700 rounded-lg p-4 mb-6">
+                    <div className="mb-2">
+                      <span className="text-gray-400 text-sm">Title:</span>
+                      <span className="text-white ml-2">{storyTitle || "Untitled Anime"}</span>
+                    </div>
+                    <div className="mb-2">
+                      <span className="text-gray-400 text-sm">Author:</span>
+                      <span className="text-white ml-2">{author || "Anonymous"}</span>
                     </div>
                     <div>
-                      <label className="block text-gray-400 text-sm mb-1">Description</label>
-                      <textarea
-                        value={description}
-                        onChange={(e) => setDescription(e.target.value)}
-                        className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2 h-24"
-                          />
-                        </div>
-                      <div>
-                      <label className="block text-gray-400 text-sm mb-1">Export Format</label>
-                            <select
-                        className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2"
-                      >
-                        <option value="mp4">MP4 Video</option>
-                        <option value="gif">Animated GIF</option>
-                        <option value="webm">WebM</option>
-                            </select>
-                          </div>
-                    <div>
-                      <label className="block text-gray-400 text-sm mb-1">Resolution</label>
-                      <select
-                        className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2"
-                      >
-                        <option value="720p">720p (HD)</option>
-                        <option value="1080p">1080p (Full HD)</option>
-                        <option value="2160p">2160p (4K)</option>
-                      </select>
+                      <span className="text-gray-400 text-sm">Total Duration:</span>
+                      <span className="text-white ml-2">{scenes.reduce((total, scene) => {
+                        const sceneClips = scene.clips || [];
+                        const sceneDuration = sceneClips.length > 0
+                          ? Math.max(...sceneClips.map(clip => clip.endTime))
+                          : 0;
+                        return total + sceneDuration;
+                      }, 0).toFixed(1)} seconds</span>
                     </div>
-                  <button
-                      onClick={exportAnimation}
-                      className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors duration-300"
-                  >
-                      Export Animation
-                  </button>
+                  </div>
+                  
+                  <div className="flex space-x-3">
+                    <button
+                      onClick={() => setShowPublishModal(false)}
+                      className="flex-1 py-2 px-4 bg-gray-600 hover:bg-gray-500 text-white rounded-lg"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={publishAnime}
+                      className="flex-1 py-2 px-4 bg-green-600 hover:bg-green-700 text-white rounded-lg flex items-center justify-center"
+                      disabled={loading}
+                    >
+                      {loading ? (
+                        <><span className="animate-spin mr-2">⟳</span> Publishing...</>
+                      ) : (
+                        <>Publish Anime</>
+                      )}
+                    </button>
                   </div>
                 </div>
               </div>

@@ -4,7 +4,9 @@
     "@ffmpeg/ffmpeg": "^0.10.1",
     "axios": "^1.8.4",
     "dotenv": "^16.4.7",
-    "react-hot-toast": "^2.5.2"
+    "firebase-admin": "^13.3.0",
+    "react-hot-toast": "^2.5.2",
+    "sharp": "^0.34.1"
   },
   "devDependencies": {
     "firebase-tools": "^14.1.0"

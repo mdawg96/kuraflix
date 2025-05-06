@@ -1873,7 +1873,7 @@ const MangaCreatorPageComponent = () => {
               <button 
                 onClick={publishManga}
                 className="manga-btn bg-gradient-to-r from-anime-indigo to-anime-pink text-white rounded-lg shadow-manga hover:shadow-manga-lg transform hover:scale-105 transition-all duration-200"
-                disabled={!storyTitle || !author || !genre || !description}
+                disabled={!storyTitle || !author || !genre}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
@@ -2374,6 +2374,27 @@ const MangaCreatorPageComponent = () => {
                       className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white"
                       placeholder="Your name"
                     />
+                  </div>
+                  <div>
+                    <label className="block text-gray-300 text-sm mb-1">Genre</label>
+                    <select 
+                      value={genre}
+                      onChange={(e) => setGenre(e.target.value)}
+                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white"
+                    >
+                      <option value="">Select Genre</option>
+                      <option value="Action">Action</option>
+                      <option value="Adventure">Adventure</option>
+                      <option value="Comedy">Comedy</option>
+                      <option value="Drama">Drama</option>
+                      <option value="Fantasy">Fantasy</option>
+                      <option value="Horror">Horror</option>
+                      <option value="Romance">Romance</option>
+                      <option value="Sci-Fi">Sci-Fi</option>
+                      <option value="Slice of Life">Slice of Life</option>
+                      <option value="Sports">Sports</option>
+                      <option value="Supernatural">Supernatural</option>
+                    </select>
                   </div>
                   <div>
                     <label className="block text-gray-300 text-sm mb-1">Description</label>

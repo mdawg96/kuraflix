@@ -3,9 +3,8 @@ import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { characterAPI } from '../services/api';
 import { auth } from '../firebase/config';
 import { useAuth } from '../context/AuthContext';
-// Import placeholder images
-import characterPlaceholder from '../assets/images/placeholders/image.png';
-import fallbackImage from '../assets/images/placeholders/image.png'; // Using the same image as fallback
+// Import placeholder image
+import characterPlaceholderImage from '../assets/images/placeholders/manga.png';
 
 const CharacterCreatorPage = () => {
   const navigate = useNavigate();
@@ -24,20 +23,6 @@ const CharacterCreatorPage = () => {
   const [role, setRole] = useState('Protagonist');
   const [artStyle, setArtStyle] = useState('Anime (Modern)');
 
-  // Story assignment
-  const [assignToStory, setAssignToStory] = useState(false);
-  const [storyType, setStoryType] = useState('anime');
-  const [selectedStory, setSelectedStory] = useState('');
-  const [newStoryName, setNewStoryName] = useState('');
-  const [createNewStory, setCreateNewStory] = useState(false);
-
-  // Placeholder for user's existing stories
-  const [userStories, setUserStories] = useState([
-    { id: 1, name: 'Hero Academy', type: 'anime' },
-    { id: 2, name: 'Mystic Legends', type: 'manga' },
-    { id: 3, name: 'Shadow Realm', type: 'anime' }
-  ]);
-  
   // Check for edit mode from location state
   useEffect(() => {
     if (location.state && location.state.editCharacter) {
@@ -50,12 +35,6 @@ const CharacterCreatorPage = () => {
       setImageConfirmed(true); // Image is already confirmed in edit mode
       setRole(editCharacter.role);
       setArtStyle(editCharacter.artStyle || 'Anime (Modern)');
-      
-      if (editCharacter.story) {
-        setAssignToStory(true);
-        setSelectedStory(editCharacter.story.id);
-        setStoryType(editCharacter.story.type);
-      }
     }
   }, [location]);
 
@@ -93,7 +72,8 @@ const CharacterCreatorPage = () => {
         name: characterName,
         description: characterDescription,
         role,
-        artStyle
+        artStyle,
+        orientation: 'portrait' // Always generate in vertical/portrait orientation
       });
 
       // Set generating to false regardless of outcome
@@ -129,18 +109,13 @@ const CharacterCreatorPage = () => {
       return;
     }
 
-    // Prepare the character data
+    // Prepare the character data (without project assignment)
     const characterData = {
       name: characterName,
       description: characterDescription,
       imagePath: characterImage,
       role,
-      artStyle,
-      story: assignToStory 
-        ? createNewStory 
-          ? { name: newStoryName, type: storyType } 
-          : userStories.find(s => s.id.toString() === selectedStory.toString())
-        : null
+      artStyle
     };
 
     try {
@@ -170,7 +145,7 @@ const CharacterCreatorPage = () => {
 
   const handleImageError = (e) => {
     console.error('Image failed to load, using fallback', e.target.src);
-    e.target.src = fallbackImage;
+    e.target.src = characterPlaceholderImage;
   };
 
   // Function to build correct image URL
@@ -340,125 +315,6 @@ const CharacterCreatorPage = () => {
             
             {(imageConfirmed || isEditMode) && (
               <>
-                <div className="bg-gray-700 p-4 rounded-md mb-2">
-                  <h3 className="text-md font-semibold text-white mb-2">Project Assignment</h3>
-                  <div className="flex items-center mb-3">
-                    <input
-                      type="checkbox"
-                      id="assignToStory"
-                      checked={assignToStory}
-                      onChange={(e) => setAssignToStory(e.target.checked)}
-                      className="h-4 w-4 text-indigo-600 rounded border-gray-700 bg-gray-900 focus:ring-indigo-500"
-                    />
-                    <label htmlFor="assignToStory" className="ml-2 text-sm font-medium text-white">
-                      {isEditMode ? 
-                        (selectedStory ? 'Change project assignment' : 'Assign character to a project') : 
-                        'Assign character to a project'
-                      }
-                    </label>
-                  </div>
-                  
-                  {assignToStory && (
-                    <div className="space-y-4 mt-3">
-                      <div className="flex space-x-4">
-                        <div className="flex items-center">
-                          <input
-                            type="radio"
-                            id="existingStory"
-                            name="storyOption"
-                            checked={!createNewStory}
-                            onChange={() => setCreateNewStory(false)}
-                            className="h-4 w-4 text-indigo-600 border-gray-700 bg-gray-900 focus:ring-indigo-500"
-                          />
-                          <label htmlFor="existingStory" className="ml-2 text-sm font-medium text-white">
-                            Existing Project
-                          </label>
-                        </div>
-                        
-                        <div className="flex items-center">
-                          <input
-                            type="radio"
-                            id="newStory"
-                            name="storyOption"
-                            checked={createNewStory}
-                            onChange={() => setCreateNewStory(true)}
-                            className="h-4 w-4 text-indigo-600 border-gray-700 bg-gray-900 focus:ring-indigo-500"
-                          />
-                          <label htmlFor="newStory" className="ml-2 text-sm font-medium text-white">
-                            Create New Project
-                          </label>
-                        </div>
-                      </div>
-                      
-                      {createNewStory ? (
-                        <div className="space-y-3">
-                          <div>
-                            <label htmlFor="storyType" className="block text-sm font-medium text-gray-300">Project Type</label>
-                            <div className="flex space-x-4 mt-1">
-                              <div className="flex items-center">
-                                <input
-                                  type="radio"
-                                  id="animeType"
-                                  name="storyType"
-                                  checked={storyType === 'anime'}
-                                  onChange={() => setStoryType('anime')}
-                                  className="h-4 w-4 text-indigo-600 border-gray-700 bg-gray-900 focus:ring-indigo-500"
-                                />
-                                <label htmlFor="animeType" className="ml-2 text-sm font-medium text-white">
-                                  Anime
-                                </label>
-                              </div>
-                              
-                              <div className="flex items-center">
-                                <input
-                                  type="radio"
-                                  id="mangaType"
-                                  name="storyType"
-                                  checked={storyType === 'manga'}
-                                  onChange={() => setStoryType('manga')}
-                                  className="h-4 w-4 text-indigo-600 border-gray-700 bg-gray-900 focus:ring-indigo-500"
-                                />
-                                <label htmlFor="mangaType" className="ml-2 text-sm font-medium text-white">
-                                  Manga
-                                </label>
-                              </div>
-                            </div>
-                          </div>
-                          
-                          <div>
-                            <label htmlFor="newStoryName" className="block text-sm font-medium text-gray-300">Project Name</label>
-                            <input
-                              type="text"
-                              id="newStoryName"
-                              className="input w-full mt-1"
-                              placeholder="Enter new project name"
-                              value={newStoryName}
-                              onChange={(e) => setNewStoryName(e.target.value)}
-                            />
-                          </div>
-                        </div>
-                      ) : (
-                        <div>
-                          <label htmlFor="selectedStory" className="block text-sm font-medium text-gray-300">Select Project</label>
-                          <select
-                            id="selectedStory"
-                            className="input w-full mt-1"
-                            value={selectedStory}
-                            onChange={(e) => setSelectedStory(e.target.value)}
-                          >
-                            <option value="">Select a project...</option>
-                            {userStories.filter(story => !storyType || story.type === storyType).map(story => (
-                              <option key={story.id} value={story.id}>
-                                {story.name} ({story.type})
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-                
                 <button className="btn-primary w-full" onClick={saveCharacter}>
                   {isEditMode ? 'Save Changes' : 'Save Character'}
                 </button>

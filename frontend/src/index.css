@@ -515,4 +515,13 @@ body {
 /* Add glow effect for selected panel */
 .shadow-glow-pink {
   box-shadow: 0 0 12px 2px rgba(244, 114, 182, 0.6);
+}
+
+/* Manga text bubble styles */
+.manga-text-bubble {
+  font-family: 'Comic Sans MS', 'Comic Neue', cursive;
+  font-weight: bold;
+  text-shadow: 0.5px 0.5px 0 #fff, -0.5px 0.5px 0 #fff, 0.5px -0.5px 0 #fff, -0.5px -0.5px 0 #fff;
+  letter-spacing: 0.5px;
+  word-break: break-word;
 } 

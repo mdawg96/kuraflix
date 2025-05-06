@@ -51,9 +51,9 @@ const Navbar = () => {
 
   // Helper function to check if Characters path is active
   const isCharactersActive = () => {
-    return location.pathname === '/character-creator' || 
+    return location.pathname === '/character-library' || 
       location.pathname.includes('/my-stories/characters') ||
-      (location.pathname === '/login' && ['/character-creator'].includes(sessionStorage.getItem('intendedPath')));
+      (location.pathname === '/login' && ['/character-library'].includes(sessionStorage.getItem('intendedPath')));
   };
 
   // Helper function to check if My Stories path is active
@@ -75,7 +75,7 @@ const Navbar = () => {
   // Handle Characters link click
   const handleCharactersClick = () => {
     if (!isLoggedIn) {
-      sessionStorage.setItem('intendedPath', '/character-creator');
+      sessionStorage.setItem('intendedPath', '/character-library');
     }
     setIsMenuOpen(false);
   };
@@ -84,6 +84,14 @@ const Navbar = () => {
   const handleStoriesClick = () => {
     if (!isLoggedIn) {
       sessionStorage.setItem('intendedPath', '/my-stories');
+    }
+    setIsMenuOpen(false);
+  };
+
+  // Handle Studio link click
+  const handleStudioClick = () => {
+    if (!isLoggedIn) {
+      sessionStorage.setItem('intendedPath', '/manga-studio');
     }
     setIsMenuOpen(false);
   };
@@ -108,10 +116,10 @@ const Navbar = () => {
                 Home
               </Link>
               
-              {/* Create dropdown */}
+              {/* Create dropdown - make login protected */}
               <div className="relative" ref={createMenuRef}>
                 <button 
-                  onClick={() => setIsCreateMenuOpen(!isCreateMenuOpen)}
+                  onClick={() => isLoggedIn ? setIsCreateMenuOpen(!isCreateMenuOpen) : navigate('/login')}
                   className={`${isCreateActive() ? 'text-blue-400' : 'text-white hover:text-blue-400'} px-3 py-2 text-sm font-medium flex items-center`}
                 >
                   Studio
@@ -121,7 +129,7 @@ const Navbar = () => {
                 </button>
                 
                 {/* Dropdown menu */}
-                {isCreateMenuOpen && (
+                {isLoggedIn && isCreateMenuOpen && (
                   <div className="absolute left-0 mt-2 w-48 rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-50">
                     <div className="py-1" role="menu" aria-orientation="vertical" aria-labelledby="options-menu">
                       <Link 
@@ -144,7 +152,7 @@ const Navbar = () => {
               </div>
               
               <Link 
-                to={isLoggedIn ? "/character-creator" : "/login"} 
+                to={isLoggedIn ? "/character-library" : "/login"} 
                 className={`${isCharactersActive() ? 'text-blue-400' : 'text-white hover:text-blue-400'} px-3 py-2 text-sm font-medium`}
                 onClick={handleCharactersClick}
               >
@@ -245,27 +253,27 @@ const Navbar = () => {
             Home
           </Link>
           
-          {/* Create options */}
+          {/* Create options - make login protected */}
           <div className="px-3 py-2">
             <p className="text-gray-400 text-xs uppercase tracking-wider mb-2">Studio</p>
             <Link
-              to="/anime-studio"
+              to={isLoggedIn ? "/anime-studio" : "/login"}
               className={`block px-3 py-2 rounded-md ${isActive('/anime-studio') ? 'text-blue-400' : 'text-white hover:bg-blue-900 hover:text-white'} ml-2`}
-              onClick={() => setIsMenuOpen(false)}
+              onClick={handleStudioClick}
             >
               Anime
             </Link>
             <Link
-              to="/manga-studio"
+              to={isLoggedIn ? "/manga-studio" : "/login"}
               className={`block px-3 py-2 rounded-md ${isActive('/manga-studio') ? 'text-blue-400' : 'text-white hover:bg-blue-900 hover:text-white'} ml-2`}
-              onClick={() => setIsMenuOpen(false)}
+              onClick={handleStudioClick}
             >
               Manga
             </Link>
           </div>
           
           <Link
-            to={isLoggedIn ? "/character-creator" : "/login"}
+            to={isLoggedIn ? "/character-library" : "/login"}
             className={`block px-3 py-2 rounded-md ${isCharactersActive() ? 'text-blue-400' : 'text-white hover:bg-blue-900 hover:text-white'}`}
             onClick={handleCharactersClick}
           >

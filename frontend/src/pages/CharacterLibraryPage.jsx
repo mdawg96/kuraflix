@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { characterAPI } from '../services/api';
 import { auth } from '../firebase/config';
-import fallbackImage from '../assets/images/placeholders/image.png';
+import characterPlaceholderImage from '../assets/images/placeholders/manga.png';
 
 const CharacterLibraryPage = () => {
   const [characters, setCharacters] = useState([]);
@@ -83,12 +83,12 @@ const CharacterLibraryPage = () => {
 
   const handleImageError = (e) => {
     console.error('Image failed to load, using fallback', e.target.src);
-    e.target.src = fallbackImage;
+    e.target.src = characterPlaceholderImage;
   };
 
   // Function to build correct image URL
   const getImageUrl = (imagePath) => {
-    if (!imagePath) return fallbackImage;
+    if (!imagePath) return characterPlaceholderImage;
     
     // If already a full URL, use it directly
     if (imagePath.startsWith('http')) {
@@ -131,21 +131,27 @@ const CharacterLibraryPage = () => {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
       <div className="text-center mb-8">
-        <h1 className="text-3xl font-extrabold text-white sm:text-4xl">My Characters</h1>
+        <h1 className="text-3xl font-extrabold text-white sm:text-4xl">
+          {characters.length > 0 ? "My Characters" : "Character Creator"}
+        </h1>
         <p className="mt-3 max-w-2xl mx-auto text-xl text-gray-400 sm:mt-4">
-          Manage your characters or create new ones
+          {characters.length > 0 
+            ? "Manage your characters or create new ones" 
+            : "Create your first character to bring your stories to life"}
         </p>
       </div>
 
-      {/* Create character button */}
-      <div className="flex justify-center mb-8">
-        <Link
-          to="/create-character"
-          className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-        >
-          Create New Character
-        </Link>
-      </div>
+      {/* Create character button - only show when there are characters */}
+      {characters.length > 0 && (
+        <div className="flex justify-center mb-8">
+          <Link
+            to="/character-creator"
+            className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+          >
+            Create New Character
+          </Link>
+        </div>
+      )}
 
       {/* Characters grid or empty state */}
       {characters.length > 0 ? (
@@ -226,7 +232,7 @@ const CharacterLibraryPage = () => {
           </p>
           <div className="mt-8">
             <Link
-              to="/create-character"
+              to="/character-creator"
               className="inline-flex items-center px-8 py-4 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
             >
               <svg 
@@ -241,7 +247,7 @@ const CharacterLibraryPage = () => {
                   clipRule="evenodd" 
                 />
               </svg>
-              Create Your First Character
+              Create Character
             </Link>
           </div>
         </div>

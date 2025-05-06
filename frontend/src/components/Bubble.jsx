@@ -11,6 +11,7 @@ import PropTypes from 'prop-types';
  * @param {string} props.borderColor Border color (tailwind class or hex)
  * @param {string} props.textColor Text color (tailwind class or hex)
  * @param {'sm'|'md'|'lg'|'xl'} props.size Size of the bubble
+ * @param {string} props.fontFamily Font family for the text
  * @param {string} props.className Additional classes to add to the bubble
  * @param {boolean} props.draggable Whether the bubble can be dragged
  * @param {boolean} props.editable Whether the text is editable
@@ -22,17 +23,19 @@ import PropTypes from 'prop-types';
  * @param {function} props.onSelect Callback when the bubble is selected
  * @param {number} props.fontSize Font size for the text
  * @param {number} props.opacity Opacity for the bubble
+ * @param {number} props.scale Scale factor for consistent scaling
  * @returns {JSX.Element} The rendered speech bubble
  */
 const Bubble = ({ 
   type, 
   text, 
   tailPosition = 'bottom',
-  bgColor = 'yellow',
+  bgColor = 'white',
   borderColor = 'black',
   textColor = 'black',
   size = 'md',
   fontSize,
+  fontFamily,
   className = '',
   draggable = false,
   editable = false,
@@ -42,7 +45,8 @@ const Bubble = ({
   position = { x: 0, y: 0 },
   selected = false,
   onSelect,
-  opacity = 1
+  opacity = 1,
+  scale
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [localText, setLocalText] = useState(text);
@@ -59,13 +63,16 @@ const Bubble = ({
   const isBorderHex = borderColor.startsWith('#');
   const isTextHex = textColor.startsWith('#');
   
+  // Scale factor - allows bubbles to be scaled consistently in different contexts
+  const scaleFactor = scale || 1;
+  
   const bgColorClass = isBgHex ? '' : (bgColor.includes('bg-') ? bgColor : `bg-${bgColor}`);
   const borderColorClass = isBorderHex ? '' : (borderColor.includes('border-') ? borderColor : `border-${borderColor}`);
   const textColorClass = isTextHex ? '' : (textColor.includes('text-') ? textColor : `text-${textColor}`);
   
   // Base inline styles (excluding background for now)
   const baseInlineStyles = {
-    fontSize: fontSize ? `${fontSize}px` : undefined,
+    fontSize: fontSize ? `${Math.round(fontSize * scaleFactor)}px` : undefined,
     ...(isBorderHex && { borderColor: borderColor }),
     ...(isTextHex && { color: textColor }),
   };
@@ -81,7 +88,19 @@ const Bubble = ({
     xl: 'max-w-md text-xl'
   };
   
-  const sizeClass = sizeClasses[size] || sizeClasses.md;
+  // Adjust the size class based on scale factor
+  const getScaledSizeClass = () => {
+    // If we have a scale factor different from 1, adjust the size proportionally
+    if (scaleFactor !== 1) {
+      // Scale down to a smaller size when scaling factor is applied
+      if (size === 'xl' && scaleFactor < 0.8) return sizeClasses.lg;
+      if (size === 'lg' && scaleFactor < 0.6) return sizeClasses.md;
+      if (size === 'md' && scaleFactor < 0.4) return sizeClasses.sm;
+    }
+    return sizeClasses[size] || sizeClasses.md;
+  };
+  
+  const sizeClass = getScaledSizeClass();
   
   // Handle mouse down for dragging
   const handleMouseDown = (e) => {
@@ -97,15 +116,31 @@ const Bubble = ({
     const startPosX = position.x;
     const startPosY = position.y;
     
+    // Get the container's dimensions for percentage calculations
+    const container = bubbleRef.current.closest('.manga-panel') || document.body;
+    const containerRect = container.getBoundingClientRect();
+    const containerWidth = containerRect.width;
+    const containerHeight = containerRect.height;
+    
     const handleMouseMove = (moveEvent) => {
       moveEvent.stopPropagation();
-      const newX = startPosX + (moveEvent.clientX - startX);
-      const newY = startPosY + (moveEvent.clientY - startY);
+      
+      // Calculate delta movement in pixels
+      const deltaX = moveEvent.clientX - startX;
+      const deltaY = moveEvent.clientY - startY;
+      
+      // Convert pixel movement to percentage relative to container
+      const deltaXPercent = (deltaX / containerWidth) * 100;
+      const deltaYPercent = (deltaY / containerHeight) * 100;
+      
+      // Calculate new position in percentage
+      const newX = startPosX + deltaXPercent;
+      const newY = startPosY + deltaYPercent;
       
       if (onPositionChange) {
         onPositionChange({ 
-          x: Math.max(0, newX), 
-          y: Math.max(0, newY) 
+          x: Math.max(0, Math.min(100, newX)), 
+          y: Math.max(0, Math.min(100, newY)) 
         });
       }
     };
@@ -151,40 +186,43 @@ const Bubble = ({
   // Wrapper style for draggable bubbles
   const wrapperStyle = draggable ? {
     position: 'absolute',
-    left: `${position.x}px`,
-    top: `${position.y}px`,
+    left: `${position.x}%`,
+    top: `${position.y}%`,
+    transform: 'translate(-50%, -50%)', // Center the bubble on its position point
     zIndex: 50,
     cursor: isDragging ? 'grabbing' : 'grab',
-  } : {};
+  } : {
+    position: 'absolute',
+    left: `${position.x}%`,
+    top: `${position.y}%`,
+    transform: 'translate(-50%, -50%)', // Center the bubble on its position point
+    zIndex: 50
+  };
   
   // Base container that wraps the bubble (for dragging)
   const BubbleContainer = ({ children }) => {
-    if (draggable) {
-      return (
-        <div
-          ref={bubbleRef}
-          className={`${selected ? 'ring-2 ring-anime-pink ring-offset-2' : ''}`}
-          style={{
-            ...wrapperStyle,
-            pointerEvents: 'auto', // Ensure it can receive mouse events
-          }}
-          onMouseDown={(e) => {
-            handleMouseDown(e);
-            // Don't propagate to prevent parent handlers from firing
-            e.stopPropagation();
-          }}
-          onClick={(e) => {
-            handleBubbleClick(e);
-            // Don't propagate to prevent parent handlers from firing
-            e.stopPropagation();
-          }}
-        >
-          {children}
-        </div>
-      );
-    }
-    
-    return <>{children}</>;
+    return (
+      <div
+        ref={bubbleRef}
+        className={`${selected ? 'ring-2 ring-anime-pink ring-offset-2' : ''}`}
+        style={{
+          ...wrapperStyle,
+          pointerEvents: draggable ? 'auto' : 'none', // Ensure it can receive mouse events if draggable
+        }}
+        onMouseDown={(e) => {
+          if (draggable) handleMouseDown(e);
+          // Don't propagate to prevent parent handlers from firing
+          e.stopPropagation();
+        }}
+        onClick={(e) => {
+          handleBubbleClick(e);
+          // Don't propagate to prevent parent handlers from firing
+          e.stopPropagation();
+        }}
+      >
+        {children}
+      </div>
+    );
   };
   
   // Render different bubble types
@@ -196,7 +234,8 @@ const Bubble = ({
       const speechInlineStyles = {
         ...baseInlineStyles,
         ...(isBgHex && { backgroundColor: bgColor }),
-        '--fallback-bg': 'white' // Add fallback for tail color if needed
+        '--fallback-bg': 'white', // Add fallback for tail color if needed
+        opacity: opacity
       };
       
       // Helper to get tail position class
@@ -244,13 +283,15 @@ const Bubble = ({
                 dangerouslySetInnerHTML={{ __html: localText || 'Type here...' }}
               />
             ) : (
-              localText || 'Type here...'
+              <div className="manga-text-bubble">
+                {localText || 'Type here...'}
+              </div>
             )}
             {/* New tail implementation using inline styles */}
             <div 
               className={`absolute w-0 h-0 ${getTailPositionClass()}`}
               style={getTailStyles()}
-            />
+            ></div>
           </div>
         </BubbleContainer>
       );
@@ -345,13 +386,17 @@ const Bubble = ({
     case 'yell': {
       // SVG size based on the size prop
       const svgSizes = {
-        sm: "w-[200px] h-[140px]",
-        md: "w-[300px] h-[200px]",
-        lg: "w-[400px] h-[260px]",
-        xl: "w-[500px] h-[320px]"
+        sm: { width: 200, height: 140 },
+        md: { width: 300, height: 200 },
+        lg: { width: 400, height: 260 },
+        xl: { width: 500, height: 320 }
       };
       
-      const svgSizeClass = svgSizes[size] || svgSizes.md;
+      const svgSize = svgSizes[size] || svgSizes.md;
+      
+      // Apply scale factor to SVG dimensions
+      const scaledWidth = Math.round(svgSize.width * scaleFactor);
+      const scaledHeight = Math.round(svgSize.height * scaleFactor);
       
       // Convert color classes/hex to actual colors for SVG
       // Default yell background to white unless a specific HEX color is provided
@@ -369,7 +414,11 @@ const Bubble = ({
       
       return (
         <BubbleContainer>
-          <svg viewBox="0 0 290 200" className={`${svgSizeClass} ${className}`}>
+          <svg 
+            viewBox="0 0 290 200" 
+            className={className}
+            style={{ width: `${scaledWidth}px`, height: `${scaledHeight}px` }}
+          >
             <polygon
               points={points}
               fill={fillColor}
@@ -386,7 +435,11 @@ const Bubble = ({
                   justifyContent: 'center',
                   alignItems: 'center',
                   color: fillTextColor,
-                  fontSize: fontSize ? `${fontSize}px` : (size === 'xl' ? "24px" : size === 'lg' ? "22px" : size === 'sm' ? "16px" : "20px"),
+                  fontSize: fontSize ? `${Math.round(fontSize * scaleFactor)}px` : 
+                    (size === 'xl' ? `${Math.round(24 * scaleFactor)}px` : 
+                     size === 'lg' ? `${Math.round(22 * scaleFactor)}px` : 
+                     size === 'sm' ? `${Math.round(16 * scaleFactor)}px` : 
+                     `${Math.round(20 * scaleFactor)}px`),
                   fontWeight: 'bold',
                   textAlign: 'center'
                 }}
@@ -424,6 +477,7 @@ Bubble.propTypes = {
   textColor: PropTypes.string,
   size: PropTypes.oneOf(['sm', 'md', 'lg', 'xl']),
   fontSize: PropTypes.number,
+  fontFamily: PropTypes.string,
   className: PropTypes.string,
   draggable: PropTypes.bool,
   editable: PropTypes.bool,
@@ -436,7 +490,8 @@ Bubble.propTypes = {
   }),
   selected: PropTypes.bool,
   onSelect: PropTypes.func,
-  opacity: PropTypes.number
+  opacity: PropTypes.number,
+  scale: PropTypes.number
 };
 
 export default Bubble; 

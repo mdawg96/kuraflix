@@ -5,15 +5,47 @@ import ImageGenerationProgress from '../components/ImageGenerationProgress';
 import { Bubble } from '../components';
 import { textBoxToBubbleProps, bubblePropsToTextBox, createTextBox, convertToYellBubble } from '../utils/bubbleUtils';
 import PageEditor from '../components/PageEditor';
-import { collection, query, where, orderBy, getDocs, addDoc, updateDoc, doc, deleteDoc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { collection, query, where, orderBy, getDocs, addDoc, updateDoc, doc, deleteDoc, serverTimestamp, getDoc, limit } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'react-hot-toast';
 import ProjectSelector from '../components/ProjectSelector';
 import { SoundSelector } from '../components';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from '../firebase/config';
+import mangaPlaceholderImage from '../assets/images/placeholders/manga.png';
 
 const MangaCreatorPageComponent = () => {
   console.log("PARENT: MangaCreatorPage render");
+  
+  // Add try/catch block for safety
+  try {
+    // Add auth state logging with better null safety
+    console.log("Auth state on render:", {
+      isAuthenticated: !!auth?.currentUser,
+      uid: auth?.currentUser?.uid || 'not authenticated',
+      email: auth?.currentUser?.email || 'no email',
+      tokenExpiration: auth?.currentUser?.stsTokenManager?.expirationTime 
+        ? new Date(auth?.currentUser?.stsTokenManager?.expirationTime) 
+        : 'unknown'
+    });
+    
+    // Continue with the rest of the component...
+  } catch (error) {
+    console.error("Error during MangaCreatorPage render:", error);
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-gray-900 text-white">
+        <h1 className="text-2xl font-bold mb-4">Error in Manga Creator</h1>
+        <p className="mb-4">We encountered an error: {error.message}</p>
+        <button 
+          onClick={() => window.location.reload()}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md"
+        >
+          Reload Page
+        </button>
+      </div>
+    );
+  }
   
   const navigate = useNavigate();
   const location = useLocation();
@@ -23,6 +55,14 @@ const MangaCreatorPageComponent = () => {
   const { user: authUser } = useAuth();
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState(null);
+  
+  // Use a ref to avoid dependency issues with loadProjects
+  const authUserRef = useRef(authUser);
+  
+  // Update the ref when authUser changes
+  useEffect(() => {
+    authUserRef.current = authUser;
+  }, [authUser]);
   
   // Editor state - only used after project selection
   const [pages, setPages] = useState([createDefaultPage()]);
@@ -52,29 +92,56 @@ const MangaCreatorPageComponent = () => {
     try {
       setLoading(true);
       
-      // Get current user ID
-      if (!authUser) {
-        console.warn("User not authenticated");
+      // Check if the user is authenticated
+      if (!auth?.currentUser) {
+        console.warn("User not authenticated when loading projects");
         setProjectList([]);
         setLoading(false);
-        return;
+        return [];
       }
       
-      console.log("Loading manga projects for user:", authUser.uid);
+      // Verify authentication token is still valid
+      let token;
+      try {
+        token = await auth.currentUser.getIdToken(true);
+        if (!token) {
+          throw new Error("Token is invalid or expired");
+        }
+      } catch (authError) {
+        console.error("Authentication error:", authError);
+        toast.error("Authentication error: " + authError.message);
+        setProjectList([]);
+        setLoading(false);
+        return [];
+      }
       
-      // Query Firestore for manga projects
+      console.log("Loading manga projects for user:", auth.currentUser.uid);
+      
+      // Query Firestore for manga projects specifically
       const projectsRef = collection(db, 'mangaProjects');
+      console.log("Querying 'mangaProjects' collection");
+      
       const q = query(
         projectsRef,
-        where("userId", "==", authUser.uid),
+        where("userId", "==", auth.currentUser.uid),
         orderBy("lastEdited", "desc")
       );
       
+      console.log("Executing Firestore query:");
+      console.log("- Collection: mangaProjects");
+      console.log("- Where userId ==", auth.currentUser.uid);
+      console.log("- OrderBy lastEdited desc");
+      
       const querySnapshot = await getDocs(q);
-      console.log(`Found ${querySnapshot.docs.length} manga projects`);
+      console.log(`Found ${querySnapshot.docs.length} manga projects`, querySnapshot.docs);
+      
+      if (querySnapshot.docs.length === 0) {
+        console.log("No manga projects found for user", auth.currentUser.uid);
+      }
       
       const projects = querySnapshot.docs.map(doc => {
         const data = doc.data();
+        console.log("Project data:", doc.id, data);
         return {
           id: doc.id,
           title: data.title || 'Untitled Project',
@@ -84,13 +151,19 @@ const MangaCreatorPageComponent = () => {
           thumbnail: data.thumbnail || '/images/placeholder-panel.png',
           description: data.description || '',
           genre: data.genre || '',
+          projectType: 'manga',
         };
       });
       
+      console.log("Setting project list with", projects.length, "projects", projects);
       setProjectList(projects);
+      return projects;
     } catch (error) {
       console.error("Error loading manga projects:", error);
-      toast.error("Failed to load your manga projects");
+      console.error("Error details:", error.code, error.message);
+      toast.error("Failed to load your manga projects: " + error.message);
+      setProjectList([]);
+      return [];
     } finally {
       setLoading(false);
     }
@@ -98,10 +171,388 @@ const MangaCreatorPageComponent = () => {
   
   // Load user projects on component mount
   useEffect(() => {
-    if (showProjectSelector && authUser) {
+    if (showProjectSelector && auth?.currentUser) {
       loadProjects();
     }
-  }, [showProjectSelector, authUser]);
+  }, [showProjectSelector]);
+  
+  // Force a refresh when we return to the manga studio page
+  useEffect(() => {
+    // Check if we're on the main manga studio page
+    if (location.pathname === '/manga-studio') {
+      console.log("On manga studio page, showing project selector");
+      setShowProjectSelector(true);
+      
+      if (auth?.currentUser) {
+        console.log("Loading manga projects for user", auth.currentUser.uid);
+        loadProjects();
+      }
+    }
+  }, [location.pathname]);
+  
+  // Create a default page with 4 rows and 3 columns per row
+  function createDefaultPage() {
+    const rows = 4;  // Changed from 3 to 4
+    const cols = 3;  // Changed from 4 to 3
+    const panels = Array(rows).fill().map(() => 
+      Array(cols).fill().map(() => ({
+        id: `panel-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        colSpan: 1,
+        rowSpan: 1,
+        textBoxes: []
+      }))
+    );
+
+    return {
+      id: `page-${Date.now()}`,
+      layout: {
+        rows,
+        cols
+      },
+      panels,
+      gutterSize: 'medium',
+      backgroundColor: '#232323'
+    };
+  }
+  
+  // Helper function to count total panels in the manga
+  const countPanels = (pages) => {
+    let count = 0;
+    for (const page of pages) {
+      if (page.panels) {
+        for (const row of page.panels) {
+          if (Array.isArray(row)) {
+            count += row.length;
+          }
+        }
+      }
+    }
+    return count;
+  };
+  
+  // Save the current project to Firestore
+  const saveProject = useCallback(async (options = {}) => {
+    console.log("Starting saveProject function with options:", options);
+    
+    // Check for authentication
+    if (!auth.currentUser) {
+      console.error("Cannot save project: User not authenticated");
+      
+      // Try to refresh auth state
+      const refreshedUser = await new Promise((resolve) => {
+        const unsubscribe = onAuthStateChanged(auth, (user) => {
+          unsubscribe();
+          resolve(user);
+        });
+      });
+      
+      if (!refreshedUser) {
+        toast.error("You must be logged in to save a project. Please sign in again.");
+        return null;
+      }
+      
+      console.log("Authentication refreshed successfully:", refreshedUser.uid);
+    }
+    
+    // Verify authentication token is still valid and refresh if needed
+    try {
+      const token = await auth.currentUser.getIdToken(true);
+      console.log("Authentication token refreshed successfully");
+    } catch (tokenError) {
+      console.error("Failed to refresh authentication token:", tokenError);
+      toast.error("Your login session has expired. Please sign in again.");
+      return null;
+    }
+    
+    try {
+      // Show a loading toast right away
+      const loadingToast = toast.loading("Saving your manga project...");
+      setLoading(true);
+      
+      // Log the page data for debugging
+      console.log("Pages to save:", pages);
+      
+      // Create a thumbnail from the first page if available
+      let thumbnail = '/images/placeholder-panel.png';
+      
+      // Manga projects store panels in a 2D array (rows and columns)
+      if (pages.length > 0 && pages[0].panels && pages[0].panels.length > 0) {
+        // Try to find the first panel with an image
+        for (let row = 0; row < pages[0].panels.length; row++) {
+          if (pages[0].panels[row] && pages[0].panels[row].length > 0) {
+            for (let col = 0; col < pages[0].panels[row].length; col++) {
+              const panel = pages[0].panels[row][col];
+              if (panel && panel.image) {
+                thumbnail = panel.image;
+                console.log("Found thumbnail image in panel", row, col);
+                break;
+              }
+            }
+            if (thumbnail !== '/images/placeholder-panel.png') break;
+          }
+        }
+      }
+      
+      console.log("Using thumbnail:", thumbnail.substring(0, 50) + "...");
+      
+      // Create a timestamp for "last saved"
+      const saveTime = new Date();
+      
+      // Prepare manga-specific project data
+      const projectData = {
+        title: storyTitle || 'Untitled Manga',
+        author: author || auth.currentUser.displayName || 'Anonymous',
+        description: description || '',
+        genre: genre || '',
+        pages: JSON.stringify(pages),
+        pageCount: pages.length,
+        panelCount: countPanels(pages),
+        thumbnail: thumbnail,
+        userId: auth.currentUser.uid, // Important: this must match the authenticated user ID
+        projectType: 'manga', // Explicitly mark as manga project
+        published: currentProject?.published || false, // Preserve published status or default to false
+        lastEdited: serverTimestamp(),
+        lastSaved: saveTime.toISOString(), // Add human-readable timestamp for UI
+        updated: serverTimestamp()
+      };
+      
+      console.log("Project data prepared:", JSON.stringify({
+        title: projectData.title,
+        author: projectData.author,
+        pageCount: projectData.pageCount,
+        panelCount: projectData.panelCount,
+        userId: projectData.userId,
+        projectType: projectData.projectType
+      }));
+      
+      let projectId;
+      
+      if (currentProject) {
+        // Update existing project
+        projectId = currentProject.id;
+        console.log("Updating existing project:", projectId);
+        
+        // Verify ownership before attempting update
+        try {
+          const projectRef = doc(db, 'mangaProjects', projectId);
+          const existingDoc = await getDoc(projectRef);
+          
+          if (!existingDoc.exists()) {
+            throw new Error("Cannot update: Project no longer exists");
+          }
+          
+          if (existingDoc.data().userId !== auth.currentUser.uid) {
+            throw new Error("Cannot update: You don't have permission to edit this project");
+          }
+          
+          await updateDoc(projectRef, projectData);
+          console.log("Successfully updated manga project:", projectId);
+          
+          // Update the current project with save time
+          setCurrentProject({
+            ...currentProject,
+            lastSaved: saveTime.toISOString()
+          });
+        } catch (updateError) {
+          console.error("Firestore update error:", updateError);
+          
+          if (updateError.code === 'permission-denied') {
+            toast.error("Permission denied. You don't have access to update this project.");
+          } else {
+            toast.error("Failed to update project: " + updateError.message);
+          }
+          
+          toast.dismiss(loadingToast);
+          setLoading(false);
+          return null;
+        }
+      } else {
+        // Create new project
+        projectData.created = serverTimestamp();
+        console.log("Creating new manga project in 'mangaProjects' collection");
+        
+        try {
+          const projectRef = collection(db, 'mangaProjects');
+          const docRef = await addDoc(projectRef, projectData);
+          projectId = docRef.id;
+          console.log("Successfully created new manga project:", projectId);
+          setCurrentProject({ 
+            id: projectId, 
+            ...projectData,
+            lastSaved: saveTime.toISOString()
+          });
+        } catch (addError) {
+          console.error("Firestore add error:", addError);
+          
+          if (addError.code === 'permission-denied') {
+            toast.error("Permission denied. You don't have access to create projects.");
+          } else {
+            toast.error("Failed to create project: " + addError.message);
+          }
+          
+          toast.dismiss(loadingToast);
+          setLoading(false);
+          return null;
+        }
+      }
+      
+      // Dismiss the loading toast and show success
+      toast.dismiss(loadingToast);
+      toast.success("Manga project saved successfully!");
+      
+      // Update URL to show we're editing this project
+      if (!currentProject) {
+        window.history.pushState(
+          {},
+          '',
+          `?view=editor&projectId=${projectId}`
+        );
+      }
+      
+      // If the user is in the editor and clicked Save, don't navigate away
+      // unless specifically requested
+      const shouldNavigate = options.navigateAfterSave !== false;
+      
+      if (!shouldNavigate) {
+        console.log("Not navigating after save (staying in editor)");
+        return projectId;
+      }
+      
+      // Force refresh the project list before navigating
+      console.log("Refreshing project list before navigation");
+      await loadProjects();
+      
+      // Reset state and navigate to manga studio immediately 
+      // without the setTimeout that was causing issues
+      console.log("Navigating to manga studio immediately");
+      setShowProjectSelector(true); // Make sure we show the project selector
+      navigate('/manga-studio', { replace: true, state: { refresh: true } });
+      
+      return projectId;
+    } catch (error) {
+      console.error("Error saving manga project:", error);
+      console.error("Error details:", error.code, error.message, error.stack);
+      
+      // Check for specific error types
+      if (error.code === 'permission-denied') {
+        toast.error("Permission denied. Please check if you're properly logged in.");
+      } else if (error.code === 'unauthenticated') {
+        toast.error("Authentication failed. Please sign in again.");
+      } else {
+        toast.error("Failed to save manga project: " + error.message);
+      }
+      
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, [currentProject, pages, storyTitle, author, description, genre, navigate, countPanels, loadProjects]);
+  
+  // Add an effect to handle location state for refreshing project list
+  useEffect(() => {
+    if (location.state?.refresh) {
+      console.log("Found refresh state in location, loading projects");
+      loadProjects();
+      // Clear the state to prevent repeated refreshes
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.state, navigate, loadProjects]);
+  
+  // Auto-save the current project to Firestore without loading states
+  const autoSaveProject = useCallback(async () => {
+    if (!auth.currentUser || !currentProject) {
+      return;
+    }
+    
+    try {
+      // Create a thumbnail from the first page if available
+      let thumbnail = '/images/placeholder-panel.png';
+      
+      // Manga projects store panels in a 2D array (rows and columns)
+      if (pages.length > 0 && pages[0].panels && pages[0].panels.length > 0) {
+        // Try to find the first panel with an image
+        for (let row = 0; row < pages[0].panels.length; row++) {
+          if (pages[0].panels[row] && pages[0].panels[row].length > 0) {
+            for (let col = 0; col < pages[0].panels[row].length; col++) {
+              const panel = pages[0].panels[row][col];
+              if (panel && panel.image) {
+                thumbnail = panel.image;
+                break;
+              }
+            }
+            if (thumbnail !== '/images/placeholder-panel.png') break;
+          }
+        }
+      }
+      
+      // Prepare project data
+      const projectData = {
+        title: storyTitle || 'Untitled Manga',
+        author: author || auth.currentUser.displayName || 'Anonymous',
+        description: description || '',
+        genre: genre || '',
+        pages: JSON.stringify(pages),
+        pageCount: pages.length,
+        thumbnail: thumbnail,
+        userId: auth.currentUser.uid,
+        projectType: 'manga',
+        published: currentProject.published || false, // Preserve published status
+        lastEdited: serverTimestamp(),
+        updated: serverTimestamp()
+      };
+      
+      const projectId = currentProject.id;
+      const projectRef = doc(db, 'mangaProjects', projectId);
+      await updateDoc(projectRef, projectData);
+      console.log("Auto-saved manga project:", projectId);
+      
+      toast.success("Manga project auto-saved", {
+        duration: 2000,
+        position: 'bottom-right',
+        style: { background: '#2a303c', color: '#fff' }
+      });
+      
+      return projectId;
+    } catch (error) {
+      console.error("Error auto-saving manga project:", error);
+      toast.error("Failed to auto-save project");
+      return null;
+    }
+  }, [currentProject, pages, storyTitle, author, description, genre]);
+  
+  // Save project when user leaves the page
+  useEffect(() => {
+    const handleBeforeUnload = async (e) => {
+      if (!showProjectSelector && currentProject) {
+        // Save the current project before leaving
+        e.preventDefault();
+        e.returnValue = '';
+        await saveProject();
+      }
+    };
+    
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [showProjectSelector, currentProject, saveProject]);
+  
+  // Auto-save project every 60 seconds
+  useEffect(() => {
+    // Skip if we're in project selector or no project is loaded
+    if (showProjectSelector || !authUserRef.current || !currentProject) return;
+    
+    // Set up auto-save interval
+    const autoSaveInterval = setInterval(async () => {
+      console.log("Auto-saving manga project...");
+      await autoSaveProject();
+    }, 60000); // 60 seconds
+    
+    return () => {
+      clearInterval(autoSaveInterval);
+    };
+  }, [showProjectSelector, currentProject, autoSaveProject]);
   
   // Check URL params on component mount and when popstate fires
   useEffect(() => {
@@ -175,6 +626,28 @@ const MangaCreatorPageComponent = () => {
       if (typeof projectData.pages === 'string') {
         try {
           projectPages = JSON.parse(projectData.pages);
+          
+          // Verify that panel data is correct
+          let hasValidStructure = true;
+          for (const page of projectPages) {
+            if (!page.panels || !Array.isArray(page.panels)) {
+              hasValidStructure = false;
+              break;
+            }
+            // Check if row/column structure is intact
+            for (const row of page.panels) {
+              if (!Array.isArray(row)) {
+                hasValidStructure = false;
+                break;
+              }
+            }
+          }
+          
+          if (!hasValidStructure) {
+            console.warn("Project has invalid panel structure, recreating default structure");
+            projectPages = [createDefaultPage()];
+          }
+          
         } catch (err) {
           console.error("Error parsing pages JSON:", err);
           projectPages = [createDefaultPage()];
@@ -185,12 +658,33 @@ const MangaCreatorPageComponent = () => {
         projectPages = [createDefaultPage()];
       }
       
+      // Ensure all pages have required properties
+      projectPages = projectPages.map(page => {
+        // Make sure layout properties exist
+        if (!page.layout) {
+          page.layout = { rows: 4, cols: 3 };
+        }
+        
+        // Ensure gutterSize exists
+        if (!page.gutterSize) {
+          page.gutterSize = 'medium';
+        }
+        
+        // Ensure backgroundColor exists
+        if (!page.backgroundColor) {
+          page.backgroundColor = '#232323';
+        }
+        
+        return page;
+      });
+      
       // Initialize pages with the loaded data
       setPages(projectPages);
       setCurrentPage(0);
       
       setShowProjectSelector(false);
       
+      console.log("Project loaded successfully:", projectData.title);
       toast.success("Project loaded successfully!");
     } catch (error) {
       console.error("Error loading project:", error);
@@ -211,71 +705,6 @@ const MangaCreatorPageComponent = () => {
       '',
       `?view=editor&projectId=${project.id}`
     );
-  };
-  
-  // Save the current project to Firestore
-  const saveProject = async () => {
-    if (!authUser) {
-      toast.error("You must be logged in to save a project");
-      return;
-    }
-    
-    try {
-      setLoading(true);
-      
-      // Create a thumbnail from the first page if available
-      const thumbnail = pages.length > 0 && pages[0].panels.length > 0 
-        ? (pages[0].panels[0].image || '/images/placeholder-panel.png')
-        : '/images/placeholder-panel.png';
-      
-      // Prepare project data
-      const projectData = {
-        title: storyTitle || 'Untitled Manga',
-        author: author || authUser.displayName || 'Anonymous',
-        description: description || '',
-        genre: genre || '',
-        pages: JSON.stringify(pages),
-        pageCount: pages.length,
-        thumbnail: thumbnail,
-        userId: authUser.uid,
-        lastEdited: serverTimestamp(),
-        updated: serverTimestamp()
-      };
-      
-      let projectId;
-      
-      if (currentProject) {
-        // Update existing project
-        projectId = currentProject.id;
-        const projectRef = doc(db, 'mangaProjects', projectId);
-        await updateDoc(projectRef, projectData);
-        console.log("Updated project:", projectId);
-      } else {
-        // Create new project
-        projectData.created = serverTimestamp();
-        const projectRef = collection(db, 'mangaProjects');
-        const docRef = await addDoc(projectRef, projectData);
-        projectId = docRef.id;
-        setCurrentProject({ id: projectId, ...projectData });
-        console.log("Created new project:", projectId);
-      }
-      
-      // Update URL with the project ID
-      window.history.pushState(
-        {},
-        '',
-        `?view=editor&projectId=${projectId}`
-      );
-      
-      toast.success("Project saved successfully!");
-      return projectId;
-    } catch (error) {
-      console.error("Error saving project:", error);
-      toast.error("Failed to save project: " + error.message);
-      return null;
-    } finally {
-      setLoading(false);
-    }
   };
   
   // Create a new project and proceed to editor
@@ -333,31 +762,6 @@ const MangaCreatorPageComponent = () => {
     window.history.pushState({}, '', '?view=projects');
     setShowProjectSelector(true);
   };
-  
-  // Create a default page with 4 rows and 3 columns per row
-  function createDefaultPage() {
-    const rows = 4;  // Changed from 3 to 4
-    const cols = 3;  // Changed from 4 to 3
-    const panels = Array(rows).fill().map(() => 
-      Array(cols).fill().map(() => ({
-        id: `panel-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        colSpan: 1,
-        rowSpan: 1,
-        textBoxes: []
-      }))
-    );
-
-    return {
-      id: `page-${Date.now()}`,
-      layout: {
-        rows,
-        cols
-      },
-      panels,
-      gutterSize: 'medium',
-      backgroundColor: '#232323'
-    };
-  }
   
   // Handle adding a new page
   const addNewPage = () => {
@@ -426,17 +830,33 @@ const MangaCreatorPageComponent = () => {
       
       const oldPanel = prevPages[currentPage].panels[row][col];
       
+      // Explicitly check if textBoxes exist in both panels and if they're different
+      const textBoxesChanged = 
+        (!oldPanel.textBoxes && updatedPanel.textBoxes) || 
+        (oldPanel.textBoxes && !updatedPanel.textBoxes) ||
+        (oldPanel.textBoxes && updatedPanel.textBoxes && 
+         JSON.stringify(oldPanel.textBoxes) !== JSON.stringify(updatedPanel.textBoxes));
+      
       // Use a more efficient comparison for panels
       const hasChanges = oldPanel.id !== updatedPanel.id ||
                          oldPanel.image !== updatedPanel.image ||
                          JSON.stringify(oldPanel.characters) !== JSON.stringify(updatedPanel.characters) ||
                          oldPanel.environment !== updatedPanel.environment ||
                          oldPanel.action !== updatedPanel.action ||
+                         textBoxesChanged || // Use the explicit text boxes check
                          oldPanel.style !== updatedPanel.style;
       
       if (!hasChanges) {
         console.log("Panel data unchanged, skipping pages update");
         return prevPages; // Return existing reference if nothing changed
+      }
+      
+      // Debugging text boxes changes
+      if (textBoxesChanged) {
+        console.log("Text boxes have changed:", {
+          old: oldPanel.textBoxes || [],
+          new: updatedPanel.textBoxes || []
+        });
       }
       
       // Only create a new pages array if we need to update
@@ -461,6 +881,7 @@ const MangaCreatorPageComponent = () => {
         JSON.stringify(prevPanel.characters) !== JSON.stringify(updatedPanel.characters) ||
         prevPanel.environment !== updatedPanel.environment ||
         prevPanel.action !== updatedPanel.action ||
+        JSON.stringify(prevPanel.textBoxes) !== JSON.stringify(updatedPanel.textBoxes) ||
         prevPanel.style !== updatedPanel.style
       );
       
@@ -525,10 +946,47 @@ const MangaCreatorPageComponent = () => {
   };
   
   // Handle publishing the manga
-  const publishManga = () => {
-    // In a real app, this would send the data to a backend
-    alert(`Manga "${storyTitle}" published successfully!`);
-    navigate('/my-stories');
+  const publishManga = async () => {
+    try {
+      setLoading(true);
+      
+      // Always save the project first, regardless of whether it's new or existing
+        const projectId = await saveProject({ navigateAfterSave: false });
+        if (!projectId) {
+          throw new Error("Failed to save project before publishing");
+      }
+      
+      // Create publish timestamp
+      const publishTime = new Date();
+      
+      // Mark the project as published in Firestore
+      const projectRef = doc(db, 'mangaProjects', projectId);
+      await updateDoc(projectRef, {
+        published: true,
+        publishedAt: serverTimestamp(),
+        lastPublished: publishTime.toISOString() // Add human-readable timestamp for UI
+      });
+      
+      // Update local state
+      setCurrentProject({
+        ...currentProject,
+        id: projectId, // Ensure we have the correct ID
+        published: true,
+        publishedAt: serverTimestamp(),
+        lastPublished: publishTime.toISOString()
+      });
+      
+      toast.success(`Manga "${storyTitle}" published successfully!`);
+      setShowPublishModal(false);
+      
+      // Navigate to my stories page
+      navigate('/my-stories');
+    } catch (error) {
+      console.error("Error publishing manga:", error);
+      toast.error(`Failed to publish manga: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
   };
   
   // Add the handleAddSound function at the main component level
@@ -596,6 +1054,9 @@ const MangaCreatorPageComponent = () => {
     const [projectCharacters, setProjectCharacters] = useState([]);
     const [allCharacters, setAllCharacters] = useState([]);
     const [loadingCharacters, setLoadingCharacters] = useState(true);
+    
+    // Track if the panel has an existing image
+    const [hasExistingImage, setHasExistingImage] = useState(!!panel.image);
     
     // Refs
     const textBoxRefs = useRef({});
@@ -842,6 +1303,9 @@ const MangaCreatorPageComponent = () => {
         // Debug state before generation
         console.log("Generating image with panel state:", panelState);
 
+        // Always use horizontal aspect ratio for manga panels
+        console.log('Using horizontal aspect ratio for manga panel generation');
+
         // Format character data properly for the API, including image URLs
         const characterData = panelState.characters.map(character => {
           // Get the correct image URL, trying multiple possible properties
@@ -866,7 +1330,8 @@ const MangaCreatorPageComponent = () => {
           characters: characterData,
           environment: panelState.environment,
           action: panelState.action,
-          style: panelState.style
+          style: panelState.style,
+          aspectRatio: 'horizontal'
         });
 
         // Log the API endpoint that will be used
@@ -879,7 +1344,8 @@ const MangaCreatorPageComponent = () => {
           environment: panelState.environment,
           action: panelState.action,
           style: panelState.style,
-          model: 'gpt-4o' // Switch model to gpt-4o
+          model: 'gpt-4o', // Switch model to gpt-4o
+          aspectRatio: 'horizontal' // Always use horizontal aspect ratio
         });
         
         console.log('Generate panel API response:', response);
@@ -951,12 +1417,22 @@ const MangaCreatorPageComponent = () => {
     };
     
     // Add new text box
-    const addTextBox = (type) => {
-      const newTextBox = createTextBox(type, {
-        text: '',
-        position: { x: 150, y: 150 }, // More centered initial position
+    const addTextBox = (type = 'speech') => {
+      const newTextBox = {
+        id: `text-box-${Date.now()}`,
+        type: type || 'speech',
+        text: 'Type text here',
+        position: { x: 50, y: 50 }, // Centered position in percentage (50%, 50%)
+        style: {
+          fontSize: 16,
+          bgColor: 'bg-white',
+          borderColor: 'border-black',
+          textColor: 'text-black',
+          opacity: 1
+        },
         tailPosition: 'bottom'
-      });
+      };
+      
       console.log(`Adding new ${type} text box:`, newTextBox);
       
       setTextBoxes(current => {
@@ -1008,7 +1484,7 @@ const MangaCreatorPageComponent = () => {
       console.log(`Updated text box:`, updatedBox);
     };
     
-    // Remove text box
+    // Remove text box - simplified since we no longer use image composition
     const removeTextBox = (id) => {
       console.log(`Removing text box with ID: ${id}`);
       
@@ -1026,13 +1502,59 @@ const MangaCreatorPageComponent = () => {
     };
     
     // Handle save button click
-    const handleSave = () => {
+    const handleSave = async () => {
       // Debug state before saving
       console.log(`[Editor ${panel.id}] Saving panel with state:`, panelState);
       console.log(`[Editor ${panel.id}] Characters being saved:`, panelState.characters);
       
       // Create a fresh copy to avoid reference issues
       const charactersCopy = JSON.parse(JSON.stringify(panelState.characters || []));
+      
+      /* 
+      // Remove image composition code
+      // If we have both an image and text boxes, create a composited image
+      if (panelState.image && textBoxes && textBoxes.length > 0) {
+        try {
+          console.log(`[Editor ${panel.id}] Compositing ${textBoxes.length} text boxes with image`);
+          setIsGenerating(true); // Reuse the generation state for composition
+          
+          // Get API URL
+          const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5001';
+          const response = await fetch(`${apiBaseUrl}/api/compose-manga-panel`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              imageUrl: panelState.image,
+              textBoxes: textBoxes
+            })
+          });
+          
+          const data = await response.json();
+          
+          if (!data.success) {
+            console.error('Error compositing image:', data.message);
+            toast.error('Failed to create composited image. Using original image instead.');
+          } else {
+            console.log(`[Editor ${panel.id}] Successfully created composited image:`, data.imagePath);
+            // Update the panel image with the composited version
+            panelState.image = data.imagePath;
+            // Also update the generated image for the UI
+            setGeneratedImage(data.imagePath);
+          }
+        } catch (error) {
+          console.error('Error calling composition API:', error);
+          toast.error('Failed to create composited image. Using original image instead.');
+        } finally {
+          setIsGenerating(false);
+        }
+      }
+      */
+      
+      // Always keep text boxes separate from the image
+      // This allows text boxes to be edited at any time
+      console.log(`[Editor ${panel.id}] Using HTML overlay approach: keeping ${textBoxes.length} text boxes separate from image`);
       
       // The entire state is already in the panelState object
       // Just need to make sure the position is preserved from the original panel
@@ -1042,25 +1564,6 @@ const MangaCreatorPageComponent = () => {
         textBoxes: textBoxes, // Include the textBoxes from local state
         position: panel.position // Keep the original position
       };
-      
-      // Modify it to add position if missing
-      if (!updatedPanel.position) {
-        // Try to find the panel position in the current page
-        let found = false;
-        pages[currentPage].panels.forEach((panelRow, rowIndex) => {
-          const colIndex = panelRow.findIndex(p => p.id === panel.id);
-          if (colIndex !== -1) {
-            updatedPanel.position = { row: rowIndex, col: colIndex };
-            found = true;
-          }
-        });
-        
-        // If still not found, default to position 0,0
-        if (!found) {
-          console.warn(`Could not find position for panel ${panel.id}, defaulting to row 0, col 0`);
-          updatedPanel.position = { row: 0, col: 0 };
-        }
-      }
       
       console.log(`[Editor ${panel.id}] Final panel data being saved:`, updatedPanel);
       onUpdate(updatedPanel);
@@ -1198,7 +1701,7 @@ const MangaCreatorPageComponent = () => {
     // Function to handle image loading errors
     const handleImageError = (e) => {
       console.error('Image failed to load, using fallback', e.target.src);
-      e.target.src = '/assets/images/placeholders/image.png'; // Use local fallback
+      e.target.src = mangaPlaceholderImage; // Use local fallback
     };
     
     // Function to build correct image URL
@@ -1206,7 +1709,7 @@ const MangaCreatorPageComponent = () => {
       // Return placeholder if no image path provided
       if (!imagePath) {
         console.log('No image path provided, using placeholder');
-        return '/assets/images/placeholders/image.png';
+        return mangaPlaceholderImage;
       }
       
       // Debugging
@@ -1247,7 +1750,7 @@ const MangaCreatorPageComponent = () => {
         return `/${cleanPath}`;
       } catch (error) {
         console.error('Error processing image URL, using fallback:', error);
-        return '/assets/images/placeholders/image.png';
+        return mangaPlaceholderImage;
       }
     };
     
@@ -1649,7 +2152,7 @@ const MangaCreatorPageComponent = () => {
                         console.log('Image URL was:', generatedImage);
                         // Fallback to a placeholder if image fails to load
                         e.target.onerror = null; // Prevent infinite loop
-                        e.target.src = '/assets/images/placeholders/image.png';
+                        e.target.src = mangaPlaceholderImage;
                       }}
                       onClick={(e) => {
                         // Only deselect if clicking directly on the image (not on bubbles)
@@ -1683,6 +2186,7 @@ const MangaCreatorPageComponent = () => {
                           <Bubble
                             key={box.id}
                             {...bubbleProps}
+                            scale={1} // Set explicit scale=1 for panel editor (full size)
                           />
                         );
                       })}
@@ -1701,6 +2205,9 @@ const MangaCreatorPageComponent = () => {
                     </svg>
                     Text Bubbles
                   </h3>
+                  
+                  {/* Remove warning message about existing text bubbles */}
+                  
                   <div className="grid grid-cols-4 gap-2">
                     <button 
                       onClick={() => addTextBox('speech')}
@@ -1768,11 +2275,13 @@ const MangaCreatorPageComponent = () => {
                             placeholder={`Enter ${box.type} text...`}
                             className="ml-3 flex-grow bg-gray-800 border border-gray-600 px-3 py-2 rounded-lg text-white text-sm font-comic focus:border-anime-pink focus:ring-1 focus:ring-anime-pink"
                           />
+                          
+                          {/* Always show delete button for all text boxes */}
                           <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                removeTextBox(box.id);
-                              }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeTextBox(box.id);
+                            }}
                             className="ml-2 p-1 text-gray-400 hover:text-red-400 bg-gray-800 rounded-full hover:bg-gray-700 transition-colors duration-200"
                           >
                             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1853,11 +2362,19 @@ const MangaCreatorPageComponent = () => {
                                 max="48" // Increased max font size
                                 value={selectedTextBox.style.fontSize || 14}
                                 onChange={(e) => {
+                                  const newSize = parseInt(e.target.value);
+                                  // Determine bubble size based on font size
+                                  let size = 'md';
+                                  if (newSize <= 12) size = 'sm';
+                                  else if (newSize >= 18 && newSize < 24) size = 'lg';
+                                  else if (newSize >= 24) size = 'xl';
+                                  
                                   updateTextBox(selectedTextBox.id, { 
                                     style: { 
                                       ...selectedTextBox.style, 
-                                      fontSize: parseInt(e.target.value) 
-                                    } 
+                                      fontSize: newSize
+                                    },
+                                    size: size // Set the bubble size property
                                   });
                                 }}
                                 className="w-full cursor-pointer accent-anime-pink"
@@ -1972,6 +2489,33 @@ const MangaCreatorPageComponent = () => {
                               <em>I</em>
                             </button>
                           </div>
+                          
+                          {/* Font Family Selection */}
+                          <div className="col-span-2 mt-3">
+                            <label className="block text-gray-300 text-xs mb-1">
+                              Font
+                            </label>
+                            <select
+                              value={selectedTextBox.style.fontFamily || 'comic'}
+                              onChange={(e) => {
+                                updateTextBox(selectedTextBox.id, { 
+                                  style: { 
+                                    ...selectedTextBox.style, 
+                                    fontFamily: e.target.value 
+                                  } 
+                                });
+                              }}
+                              className="w-full bg-gray-800 text-white border border-gray-600 rounded px-2 py-1 text-sm"
+                            >
+                              <option value="comic">Comic Sans</option>
+                              <option value="serif">Serif</option>
+                              <option value="sans">Sans-Serif</option>
+                              <option value="mono">Monospace</option>
+                              <option value="handwritten">Handwritten</option>
+                              <option value="impact">Impact</option>
+                              <option value="manga">Manga</option>
+                            </select>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -2050,6 +2594,19 @@ const MangaCreatorPageComponent = () => {
             </div>
             
             <div className="space-y-4">
+              {/* Warning about public visibility */}
+              <div className="bg-yellow-800/30 border border-yellow-600/30 rounded-lg p-4 text-yellow-300 text-sm">
+                <div className="flex items-start">
+                  <svg className="w-5 h-5 mr-2 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  <div>
+                    <p className="font-medium mb-1">Publishing Notice</p>
+                    <p>When you publish this manga, it will be visible to all users on the homepage. Make sure your content is appropriate and ready to be shared publicly.</p>
+                  </div>
+                </div>
+              </div>
+              
               {/* Display manga info instead of asking again */}
               <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 shadow-inner">
                 <div className="flex justify-between items-center">
@@ -2127,12 +2684,24 @@ const MangaCreatorPageComponent = () => {
               <button 
                 onClick={publishManga}
                 className="manga-btn bg-gradient-to-r from-anime-indigo to-anime-pink text-white rounded-lg shadow-manga hover:shadow-manga-lg transform hover:scale-105 transition-all duration-200"
-                disabled={!storyTitle || !author || !genre}
+                disabled={!storyTitle || !author || !genre || loading}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                </svg>
-                Publish
+                {loading ? (
+                  <>
+                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Publishing...
+                  </>
+                ) : (
+                  <>
+                    <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                    Publish
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -2148,17 +2717,195 @@ const MangaCreatorPageComponent = () => {
     // Don't set selectedPanel to null so it stays selected after closing
   }, []);
 
+  // Add debug function to test Firestore directly
+  const testFirestoreConnection = async () => {
+    console.log("Testing Firestore connection using test_collection...");
+    try {
+      // Check if user is authenticated first
+      if (!auth?.currentUser) {
+        console.log("User is not authenticated");
+        
+        // Try to get a fresh auth state
+        const currentUser = await new Promise((resolve) => {
+          const unsubscribe = onAuthStateChanged(auth, (user) => {
+            unsubscribe();
+            resolve(user);
+          });
+        });
+        
+        if (!currentUser) {
+          toast.error("Not authenticated. Please sign in again.");
+          return;
+        }
+        
+        // Refresh the token
+        await currentUser.getIdToken(true);
+        console.log("Token refreshed successfully");
+      }
+      
+      // Use the test_collection which has open permissions in firestore.rules
+      const testRef = collection(db, 'test_collection');
+      const testDoc = {
+        testField: "Testing connection",
+        timestamp: serverTimestamp(),
+        userId: auth?.currentUser?.uid || "anonymous"
+      };
+      
+      // Add a test document
+      const docRef = await addDoc(testRef, testDoc);
+      console.log("Test document created successfully with ID:", docRef.id);
+      
+      // Read the test document back
+      const docSnap = await getDoc(doc(db, 'test_collection', docRef.id));
+      if (docSnap.exists()) {
+        console.log("Test document data:", docSnap.data());
+        toast.success("Firestore connection successful!");
+      } else {
+        console.log("Test document not found");
+        toast.error("Test document not found");
+      }
+      
+      // Clean up by deleting the test document
+      await deleteDoc(docRef);
+      console.log("Test document deleted successfully");
+      
+    } catch (error) {
+      console.error("Firestore test error:", error);
+      console.error("Error details:", error.code, error.message);
+      
+      // Check for specific Firestore error codes
+      if (error.code === 'permission-denied') {
+        toast.error("Firebase permission denied. Please check authentication and rules.");
+      } else if (error.code === 'unauthenticated') {
+        toast.error("You are not authenticated. Please sign in again.");
+      } else {
+        toast.error(`Firestore error: ${error.message}`);
+      }
+    }
+  };
+  
+  // Add button in the component UI to test connection
+  useEffect(() => {
+    // Define an async function inside the effect to use await
+    const initializeFirestore = async () => {
+      try {
+        console.log("Initializing Firestore connection...");
+        
+        // Only proceed if we're showing project selector and auth is ready
+        if (!showProjectSelector || !auth?.currentUser) {
+          console.log("Skipping Firestore initialization - not on project selector or not authenticated");
+          return;
+        }
+        
+        console.log("Testing connection on component mount");
+        
+        // Test connection first
+        await testFirestoreConnection();
+        
+        // Load projects after connection test
+        console.log("Connection test completed, loading projects");
+        await loadProjects();
+        
+      } catch (error) {
+        console.error("Error during Firestore initialization:", error);
+        // Still try to load projects even if the test fails
+        try {
+          await loadProjects();
+        } catch (loadError) {
+          console.error("Failed to load projects after connection test failed:", loadError);
+        }
+      }
+    };
+    
+    // Execute the async function
+    initializeFirestore();
+    
+    // Note: We're intentionally not including dependencies that would cause this to re-run
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Add debug function to directly inspect the mangaProjects collection
+  const inspectMangaProjectsCollection = async () => {
+    try {
+      console.log("Directly inspecting 'mangaProjects' collection...");
+      
+      // Get all documents from the collection without filtering by user
+      const projectsRef = collection(db, 'mangaProjects');
+      const snapshot = await getDocs(projectsRef);
+      
+      console.log(`Found ${snapshot.docs.length} total documents in 'mangaProjects' collection`);
+      
+      if (snapshot.docs.length === 0) {
+        console.log("Collection is empty");
+        toast.error("The mangaProjects collection is empty");
+        return;
+      }
+      
+      // Log each document
+      snapshot.docs.forEach((doc, index) => {
+        const data = doc.data();
+        console.log(`Document ${index + 1}:`, doc.id);
+        console.log("- Title:", data.title);
+        console.log("- Author:", data.author);
+        console.log("- User ID:", data.userId);
+        console.log("- Project Type:", data.projectType);
+        console.log("- Page Count:", data.pageCount);
+        console.log("- Has pages data:", !!data.pages);
+      });
+      
+      toast.success(`Found ${snapshot.docs.length} manga projects in total`);
+    } catch (error) {
+      console.error("Error inspecting mangaProjects collection:", error);
+      toast.error("Error inspecting collection: " + error.message);
+    }
+  };
+
+  // Add auto-login refresh function
+  const refreshLoginState = async () => {
+    try {
+      // Try to refresh the auth state
+      if (!auth?.currentUser) {
+        toast.info("Currently not logged in. Checking auth status...");
+        
+        const refreshedUser = await new Promise((resolve) => {
+          const unsubscribe = onAuthStateChanged(auth, (user) => {
+            unsubscribe();
+            resolve(user);
+          });
+        });
+        
+        if (!refreshedUser) {
+          toast.error("Not authenticated");
+          return;
+        }
+        
+        toast.success(`Auth refreshed: ${refreshedUser.email}`);
+      } else {
+        // Get fresh token
+        await auth?.currentUser?.getIdToken(true);
+        toast.success(`Token refreshed for: ${auth?.currentUser?.email}`);
+      }
+    } catch (error) {
+      console.error("Auth refresh error:", error);
+      toast.error(`Auth refresh error: ${error.message}`);
+    }
+  };
+
   return (
     <div className="flex flex-col min-h-screen">
       {showProjectSelector ? (
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-          <div className="flex justify-between items-center mb-8">
-            <div>
-              <h1 className="text-3xl font-bold text-white">Manga Studio</h1>
-              <p className="text-gray-400 mt-1">Create or select a manga project to get started</p>
+        <div className="flex flex-col min-h-screen">
+          <div className="bg-gray-800 border-b border-gray-700 p-4">
+            <div className="max-w-7xl mx-auto flex justify-between items-center">
+              <div>
+                <h1 className="text-2xl font-bold text-white">Manga Studio</h1>
+                <p className="text-gray-400 mt-1">Create or select a manga project to get started</p>
+              </div>
+              {/* Loading indicator removed */}
             </div>
           </div>
           
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-grow">
           <ProjectSelector
             projectList={projectList}
             onCreateNewProject={createNewProject}
@@ -2168,43 +2915,11 @@ const MangaCreatorPageComponent = () => {
               setShowDeleteConfirmation(true);
             }}
           />
-            </div>
+          </div>
+        </div>
       ) : (
         /* Editor UI */
         <div className="flex-1 flex flex-col">
-          {/* Top Navigation Bar */}
-          <div className="bg-gray-800 border-b border-gray-700 p-4">
-            <div className="max-w-7xl mx-auto flex justify-between items-center">
-              {/* Left side - Project title */}
-              <div className="flex items-center">
-                <h1 className="text-xl font-bold text-white">{storyTitle || 'Untitled Manga'}</h1>
-                <span className="ml-2 px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300">{pages.length} pages</span>
-          </div>
-          
-              {/* Right side - Actions */}
-              <div className="flex space-x-3">
-                <button 
-                  onClick={saveProject}
-                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors"
-                >
-                  Save
-                </button>
-                <button 
-                  onClick={() => setShowPublishModal(true)}
-                  className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded transition-colors"
-                >
-                  Publish
-                </button>
-                <button 
-                  onClick={goBackToProjects}
-                  className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded transition-colors"
-                >
-                  Back to Projects
-                </button>
-              </div>
-            </div>
-          </div>
-          
           {/* Main Content Area */}
           <div className="flex-1 flex">
             {/* Left Sidebar - Pages */}
@@ -2272,9 +2987,10 @@ const MangaCreatorPageComponent = () => {
             setAuthor={setAuthor}
             description={description}
             setDescription={setDescription}
-                  onBackToProjects={null} // Remove back to projects button
-                  onShowPublishModal={() => setShowPublishModal(true)} // Add publish modal handler
-                  onShowSoundSelector={() => setShowSoundSelector(true)} // Add sound selector handler
+                  onShowPublishModal={() => setShowPublishModal(true)}
+                  onShowSoundSelector={() => setShowSoundSelector(true)}
+                  onSaveProject={saveProject}
+                  currentProject={currentProject} // Pass the currentProject to show save/publish status
                 />
               ) : (
                 <div className="flex items-center justify-center h-full">
@@ -2354,4 +3070,55 @@ const MangaCreatorPageComponent = () => {
   );
 };
 
-export default MangaCreatorPageComponent; 
+// Create a proper error boundary component
+class MangaErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null, errorInfo: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("MangaCreatorPage error:", error, errorInfo);
+    this.setState({ error, errorInfo });
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-gray-900 text-white">
+          <h1 className="text-2xl font-bold mb-4">Something went wrong in the Manga Creator</h1>
+          <p className="mb-4">We encountered an error while loading the Manga Creator.</p>
+          <div className="p-4 bg-gray-800 rounded-lg max-w-3xl w-full overflow-auto text-sm mb-4">
+            <p className="text-red-400 mb-2">{this.state.error?.toString()}</p>
+            <pre className="text-gray-400 whitespace-pre-wrap">
+              {this.state.errorInfo?.componentStack}
+            </pre>
+          </div>
+          <button 
+            onClick={() => window.location.href = '/manga-studio'}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md"
+          >
+            Reload Page
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+// Create a wrapped version for export
+const WrappedMangaCreatorPage = () => {
+  return (
+    <MangaErrorBoundary>
+      <MangaCreatorPageComponent />
+    </MangaErrorBoundary>
+  );
+};
+
+export default WrappedMangaCreatorPage; 

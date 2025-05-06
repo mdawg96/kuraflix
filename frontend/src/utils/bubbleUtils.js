@@ -17,6 +17,7 @@ export const textBoxToBubbleProps = (textBox, options = {}) => {
     onRemove,
     onSelect,
     selected = false,
+    scale = 1,
   } = options;
   
   // Map the textBox type to Bubble type
@@ -27,14 +28,15 @@ export const textBoxToBubbleProps = (textBox, options = {}) => {
   // Extract style properties
   const style = textBox.style || {};
   
-  // Determine approximate size based on fontSize and width (can be kept for default)
-  let sizeProp = 'md';
-  if (style.fontSize && style.width) {
-    if (style.fontSize <= 12 && style.width <= 120) {
+  // Determine size property explicitly if provided or calculate it
+  let sizeProp = textBox.size || 'md';
+  if (!textBox.size && style.fontSize) {
+    // Calculate based on fontSize if size not explicitly set
+    if (style.fontSize <= 12) {
       sizeProp = 'sm';
-    } else if (style.fontSize >= 18 && style.width >= 200) {
+    } else if (style.fontSize >= 18 && style.fontSize < 24) {
       sizeProp = 'lg';
-    } else if (style.fontSize >= 22 && style.width >= 250) {
+    } else if (style.fontSize >= 24) {
       sizeProp = 'xl';
     }
   }
@@ -51,6 +53,7 @@ export const textBoxToBubbleProps = (textBox, options = {}) => {
   const fontSize = style.fontSize;
   const bold = style.bold;
   const italic = style.italic;
+  const fontFamily = style.fontFamily || 'comic';
   
   // We need to ensure the position is properly set
   const position = textBox.position || { x: 100, y: 100 };
@@ -59,6 +62,33 @@ export const textBoxToBubbleProps = (textBox, options = {}) => {
   let classNames = [];
   if (italic) classNames.push('italic');
   if (bold) classNames.push('font-bold'); // Add font-bold for boldness
+  
+  // Add font family class
+  switch (fontFamily) {
+    case 'comic':
+      classNames.push('font-comic');
+      break;
+    case 'serif':
+      classNames.push('font-serif');
+      break;
+    case 'sans':
+      classNames.push('font-sans');
+      break;
+    case 'mono':
+      classNames.push('font-mono');
+      break;
+    case 'handwritten':
+      classNames.push('font-handwritten');
+      break;
+    case 'impact':
+      classNames.push('font-impact');
+      break;
+    case 'manga':
+      classNames.push('font-manga');
+      break;
+    default:
+      classNames.push('font-comic'); // Default font
+  }
   
   return {
     type,
@@ -72,6 +102,8 @@ export const textBoxToBubbleProps = (textBox, options = {}) => {
     // Pass style props directly if Bubble component supports them
     // OR construct style object/className as needed by Bubble
     fontSize, // Pass fontSize
+    fontFamily, // Pass font family
+    scale, // Pass scale factor
     // opacity,  // Pass opacity // Removed
     // Bold is handled via className now
     className: classNames.join(' '), // Combine class names
@@ -117,6 +149,22 @@ export const bubblePropsToTextBox = (bubbleProps, id = null) => {
   
   // Determine if italic based on className
   const italic = className && className.includes('italic');
+  const bold = className && className.includes('font-bold');
+  
+  // Extract font family from className or use provided fontFamily
+  let fontFamily = 'comic'; // default
+  if (className) {
+    if (className.includes('font-serif')) fontFamily = 'serif';
+    else if (className.includes('font-sans')) fontFamily = 'sans';
+    else if (className.includes('font-mono')) fontFamily = 'mono'; 
+    else if (className.includes('font-handwritten')) fontFamily = 'handwritten';
+    else if (className.includes('font-impact')) fontFamily = 'impact';
+    else if (className.includes('font-manga')) fontFamily = 'manga';
+  }
+  // If fontFamily prop is provided, use that instead
+  if (bubbleProps.fontFamily) {
+    fontFamily = bubbleProps.fontFamily;
+  }
   
   return {
     id: id || Date.now().toString(),
@@ -126,8 +174,9 @@ export const bubblePropsToTextBox = (bubbleProps, id = null) => {
     tailPosition,
     style: {
       fontSize,
-      bold: false,
+      bold,
       italic,
+      fontFamily,
       color: textColor,
       backgroundColor: bgColor,
       borderRadius: type === 'speech' ? '50%' : type === 'thought' ? '50%' : '5px',

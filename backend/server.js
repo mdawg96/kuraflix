@@ -15,6 +15,7 @@ const { OpenAI } = require('openai');
 const Runway = require('@runwayml/sdk');
 const { v2: cloudinary } = require('cloudinary');
 const mp3Duration = require('mp3-duration');
+const sharp = require('sharp');
 
 // Load environment variables
 dotenv.config();
@@ -59,9 +60,9 @@ const imageCache = new Map();
 
 // Hash function to create a cache key from input parameters
 function createCacheKey(params) {
-  const { characters, environment, action, style, model } = params;
+  const { characters, environment, action, style, model, aspectRatio } = params;
   const characterNames = characters.map(c => c.name).join(',');
-  return `${characterNames}_${environment}_${action}_${style}_${model}`.toLowerCase().replace(/\s+/g, '_');
+  return `${characterNames}_${environment}_${action}_${style}_${model}_${aspectRatio}`.toLowerCase().replace(/\s+/g, '_');
 }
 
 // Function to check cache before generating
@@ -256,12 +257,12 @@ async function setupRedisServices() {
 }
 
 // Updated helper function for GPT-4o + DALL-E 3 workflow
-async function generateImageWithGPT4o(characters, environment, action, style, negativePrompt, outputPath) {
+async function generateImageWithGPT4o(characters, environment, action, style, negativePrompt, outputPath, aspectRatio = "horizontal") {
   if (!openai) {
     throw new Error('OpenAI client not initialized');
   }
 
-  console.log('Generating panel using GPT-4o + DALL-E 3 workflow...');
+  console.log(`Generating panel using GPT-4o + DALL-E 3 workflow with horizontal aspect ratio...`);
 
   try {
     // 1. Prepare inputs for GPT-4o
@@ -272,7 +273,7 @@ async function generateImageWithGPT4o(characters, environment, action, style, ne
     const messages = [
       {
         role: "system",
-        content: "You are a world-class anime storyboard artist. Your PRIMARY directive is to faithfully represent the user's specified action and environment EXACTLY as written - never reinterpret, paraphrase, or creatively alter these core elements. After ensuring precise adherence to the user's description, you may enhance the prompt with cinematic elements including pose details, composition, facial expressions, clothing motion, background depth, camera angles, lighting, and visual storytelling. Your prompt should create a dynamic, emotionally resonant scene while STRICTLY maintaining the exact action and environment specified by the user. Accuracy to user intent is your highest priority, with creative enhancements as secondary considerations."
+        content: `You are a world-class anime storyboard artist specializing in horizontal/landscape manga panels. Your PRIMARY directive is to faithfully represent the user's specified action and environment EXACTLY as written - never reinterpret, paraphrase, or creatively alter these core elements. After ensuring precise adherence to the user's description, you may enhance the prompt with cinematic elements including pose details, composition, facial expressions, clothing motion, background depth, camera angles, lighting, and visual storytelling. Compose scenes optimized for a wide horizontal/landscape layout (16:9 aspect ratio). Your prompt should create a dynamic, emotionally resonant scene while STRICTLY maintaining the exact action and environment specified by the user. Accuracy to user intent is your highest priority, with creative enhancements as secondary considerations.`
       }
     ];
     
@@ -280,7 +281,7 @@ async function generateImageWithGPT4o(characters, environment, action, style, ne
     const userMessageContent = [
       { 
         type: "text", 
-        text: `You are helping create a manga panel in ${style} style. Below are the character references for the scene.` 
+        text: `You are helping create a horizontal manga panel in ${style} style. Below are the character references for the scene.` 
       }
     ];
 
@@ -390,11 +391,13 @@ async function generateImageWithGPT4o(characters, environment, action, style, ne
     const avoidText = negativePrompt ? `Avoid: ${negativePrompt}` : '';
     userMessageContent.push({ 
       type: "text", 
-      text: `Now generate a prompt for DALL-E 3 to create a manga panel that shows: ${action}
+      text: `Now generate a prompt for DALL-E 3 to create a horizontal manga panel that shows: ${action}
 Environment/Setting: ${environment}
 Style: ${style}
 
 CRITICAL INSTRUCTION: The prompt MUST preserve the exact action "${action}" and environment "${environment}" as specified above. Do not reinterpret, paraphrase, or creatively alter these core elements in any way.
+
+IMPORTANT: Compose for a HORIZONTAL/LANDSCAPE format (16:9 aspect ratio). Adapt the scene layout to take advantage of the wide horizontal space.
 
 After ensuring faithful reproduction of the specified action and environment, you may enhance the prompt with:
 - Full body in dynamic action poses true to the specified action
@@ -434,11 +437,12 @@ ${avoidText}`
 
     // 3. Call DALL-E 3 to generate the image
     console.log("Calling DALL-E 3 to generate image...");
+    console.log(`Using horizontal aspect ratio`);
     const imageResponse = await openai.images.generate({
       model: "dall-e-3",
       prompt: dallePrompt,
       n: 1,
-      size: "1024x1792", // Changed from 1024x1024 to 9:16 aspect ratio
+      size: "1792x1024", // Always use 16:9 for horizontal manga panels
       quality: "hd",
       style: "vivid",
     });
@@ -492,6 +496,8 @@ ${avoidText}`
 // Add a specialized function for single character generation
 async function generateSingleCharacterWithGPT4o(character, environment, action, style, negativePrompt, outputPath) {
   console.log('Generating single character using GPT-4o + DALL-E 3 workflow...');
+  // NOTE: This function intentionally uses VERTICAL format (1024x1792) for character/anime generation,
+  // unlike manga panels which use horizontal format. Do not change this aspect ratio.
 
   try {
     // Create the initial system message with specific instructions for a SINGLE character
@@ -945,7 +951,7 @@ app.get('/api/debug/comfyui-test', async (req, res) => {
 app.post('/api/generate-character', async (req, res) => {
   console.log('Character generation request received:', JSON.stringify(req.body, null, 2));
   
-  const { name, description, physicalTraits = {}, facialFeatures = {}, hairFeatures = {}, extras = {}, role, artStyle } = req.body;
+  const { name, description, physicalTraits = {}, facialFeatures = {}, hairFeatures = {}, extras = {}, role, artStyle, orientation = 'portrait' } = req.body;
   
   try {
     // Create output filename
@@ -955,12 +961,16 @@ app.post('/api/generate-character', async (req, res) => {
     // Construct prompt based on whether we have a description or detailed traits
     let prompt;
     
+    // Always force vertical/portrait orientation for character images
+    const orientationPrefix = orientation === 'portrait' || orientation === 'vertical' ? 
+      'VERTICAL PORTRAIT, FULL BODY, ' : '';
+    
     if (description) {
       // Use the text description with more explicit full-body framing
-      prompt = `${artStyle || 'anime style'}, ENTIRE BODY AND FACE VIEW of character named ${name || 'character'}, ${description}. Full-length portrait showing 100% of body from top of head to bottom of feet. Face fully visible and detailed. Character centered with feet touching bottom edge of frame. No cropping of any body parts. High quality, detailed.`;
+      prompt = `${orientationPrefix}${artStyle || 'anime style'}, ENTIRE BODY AND FACE VIEW of character named ${name || 'character'}, ${description}. Full-length portrait showing 100% of body from top of head to bottom of feet. Face fully visible and detailed. Character centered with feet touching bottom edge of frame. No cropping of any body parts. High quality, detailed.`;
     } else {
       // Use the detailed traits with more explicit full-body framing
-      prompt = `${artStyle || 'anime style'}, ENTIRE BODY AND FACE VIEW of character named ${name || 'character'}, `;
+      prompt = `${orientationPrefix}${artStyle || 'anime style'}, ENTIRE BODY AND FACE VIEW of character named ${name || 'character'}, `;
       
       // Add physical traits
       if (physicalTraits.race) prompt += `${physicalTraits.race}, `;
@@ -1103,7 +1113,10 @@ app.post('/api/generate-character', async (req, res) => {
       // Try with fallbacks to find the best model and parameters combination
       const job = await runpodClient.generateWithFallbacks({
         prompt: prompt,
-        negative_prompt: negativePrompt
+        negative_prompt: negativePrompt,
+        width: 512,  // Set width for portrait orientation
+        height: 768, // Set height for portrait orientation
+        aspect_ratio: "2:3" // Explicitly set portrait aspect ratio
       });
       
       console.log('RunPod job started:', job.id);
@@ -1338,7 +1351,7 @@ app.post('/api/render-episode', (req, res) => {
 // Manga panel generation endpoint
 app.post('/api/generate-manga-panel', async (req, res) => {
   try {
-    const { characters, environment, action, style, model, negativePrompt } = req.body;
+    const { characters, environment, action, style, model, negativePrompt, aspectRatio = "vertical" } = req.body;
     
     // Basic validation
     if (!characters || characters.length === 0) {
@@ -1367,7 +1380,9 @@ app.post('/api/generate-manga-panel', async (req, res) => {
       environment,
       action,
       style,
-      model: model || 'gpt-4o'
+      model: model || 'gpt-4o',
+      // Always using horizontal aspect ratio regardless of input
+      aspectRatio: "horizontal"
     });
     
     // Create a unique job ID
@@ -1377,7 +1392,7 @@ app.post('/api/generate-manga-panel', async (req, res) => {
     const outputPath = path.join(__dirname, 'public', 'outputs', `${jobId}.png`);
     
     // Create a cache key for this request
-    const cacheKey = createCacheKey({ characters, environment, action, style, model });
+    const cacheKey = createCacheKey({ characters, environment, action, style, model, aspectRatio: "horizontal" });
     const cachedResult = getCachedImage(cacheKey);
     
     if (cachedResult) {
@@ -1414,7 +1429,7 @@ app.post('/api/generate-manga-panel', async (req, res) => {
           createdAt: new Date()
         });
         
-        // Generate the image
+        // Generate the image (removed aspectRatio parameter)
         const result = await generateImageWithGPT4o(
           characters,
           environment,
@@ -2887,5 +2902,235 @@ app.get('/api/proxy-audio', async (req, res) => {
   } catch (error) {
     console.error(`Error in audio proxy:`, error);
     res.status(500).send({ success: false, message: error.message });
+  }
+});
+
+// Endpoint to compose text boxes with manga panel image
+app.post('/api/compose-manga-panel', async (req, res) => {
+  try {
+    const { imageUrl, textBoxes } = req.body;
+    
+    if (!imageUrl) {
+      return res.status(400).json({
+        success: false,
+        message: 'Image URL is required'
+      });
+    }
+    
+    console.log('Compose manga panel request received:', {
+      imageUrl: imageUrl.substring(0, 60) + '...',
+      textBoxesCount: textBoxes?.length || 0
+    });
+    
+    // Create a unique filename for the composed image
+    const timestamp = Date.now();
+    const filename = `composed_panel_${timestamp}.png`;
+    const outputPath = path.join(__dirname, 'public', 'outputs', filename);
+    
+    // Ensure outputDir exists
+    const outputDir = path.dirname(outputPath);
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+    
+    // Resolve the input image path - handle both absolute URLs and local paths
+    let inputImagePath;
+    let imageBuffer;
+    
+    if (imageUrl.startsWith('http')) {
+      // Fetch remote image
+      const response = await axios.get(imageUrl, { 
+        responseType: 'arraybuffer',
+        timeout: 15000
+      });
+      imageBuffer = Buffer.from(response.data);
+    } else {
+      // Handle local paths
+      if (imageUrl.startsWith('/outputs/')) {
+        inputImagePath = path.join(__dirname, 'public', imageUrl);
+      } else {
+        inputImagePath = path.resolve(imageUrl);
+      }
+      
+      if (!fs.existsSync(inputImagePath)) {
+        return res.status(404).json({
+          success: false,
+          message: `Image file not found: ${inputImagePath}`
+        });
+      }
+      
+      // Read the image file
+      imageBuffer = fs.readFileSync(inputImagePath);
+    }
+    
+    // Get image dimensions before adding overlays
+    const image = sharp(imageBuffer);
+    const metadata = await image.metadata();
+    const { width, height } = metadata;
+    
+    if (!width || !height) {
+      return res.status(400).json({
+        success: false,
+        message: 'Could not determine image dimensions'
+      });
+    }
+    
+    console.log(`Base image dimensions: ${width}x${height}`);
+    
+    // If no text boxes, just return the original image
+    if (!textBoxes || textBoxes.length === 0) {
+      // Copy the image to the new location
+      fs.writeFileSync(outputPath, imageBuffer);
+      
+      return res.json({
+        success: true,
+        message: 'No text boxes to add, original image returned',
+        imagePath: `/outputs/${filename}`
+      });
+    }
+    
+    // Create SVG with the text bubbles
+    let svgOverlay = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">`;
+    
+    // Add each text box to the SVG
+    for (const box of textBoxes) {
+      try {
+        const position = box.position || { x: 100, y: 100 };
+        const type = box.type || 'speech';
+        const text = box.text || '';
+        const style = box.style || {};
+        
+        // Skip empty text boxes
+        if (!text.trim()) continue;
+        
+        // Calculate position based on percentages
+        const x = Math.round((position.x / 100) * width);
+        const y = Math.round((position.y / 100) * height);
+        
+        // Set bubble style based on type
+        let bubbleStyles = '';
+        let bubblePath = '';
+        let textFill = style.color || 'black';
+        let bgFill = style.backgroundColor || 'white';
+        let bubbleWidth = style.width || 200;
+        let bubbleHeight = Math.max(60, Math.ceil(text.length / 15) * 20); // Approximate height based on text length
+        
+        // Bubble shape based on type
+        if (type === 'speech') {
+          // Speech bubble with tail pointing down
+          bubblePath = `
+            <ellipse cx="${x}" cy="${y - 30}" rx="${bubbleWidth/2}" ry="${bubbleHeight/2}" 
+                     fill="${bgFill}" stroke="black" stroke-width="2" />
+            <path d="M${x-10},${y+bubbleHeight/2-30} L${x},${y+20} L${x+10},${y+bubbleHeight/2-30}" 
+                  fill="${bgFill}" stroke="black" stroke-width="2" />
+          `;
+        } else if (type === 'thought') {
+          // Thought bubble with small circles as tail
+          bubblePath = `
+            <ellipse cx="${x}" cy="${y - 30}" rx="${bubbleWidth/2}" ry="${bubbleHeight/2}" 
+                     fill="${bgFill}" stroke="black" stroke-width="2" />
+            <circle cx="${x}" cy="${y+15}" r="8" fill="${bgFill}" stroke="black" stroke-width="2" />
+            <circle cx="${x+8}" cy="${y+25}" r="6" fill="${bgFill}" stroke="black" stroke-width="2" />
+            <circle cx="${x+14}" cy="${y+33}" r="4" fill="${bgFill}" stroke="black" stroke-width="2" />
+          `;
+        } else if (type === 'whisper') {
+          // Whisper bubble (dashed border)
+          bubblePath = `
+            <ellipse cx="${x}" cy="${y}" rx="${bubbleWidth/2}" ry="${bubbleHeight/2}" 
+                     fill="${bgFill}" stroke="black" stroke-width="2" stroke-dasharray="5,5" />
+          `;
+        } else if (type === 'shout') {
+          // Shout bubble (starburst shape)
+          bubblePath = `
+            <polygon points="${x-bubbleWidth/2},${y} ${x-bubbleWidth/3},${y-bubbleHeight/2} ${x},${y-bubbleHeight/2-10} 
+                            ${x+bubbleWidth/3},${y-bubbleHeight/2} ${x+bubbleWidth/2},${y} 
+                            ${x+bubbleWidth/3},${y+bubbleHeight/2} ${x},${y+bubbleHeight/2+10} 
+                            ${x-bubbleWidth/3},${y+bubbleHeight/2}"
+                     fill="${bgFill}" stroke="black" stroke-width="2" />
+          `;
+        } else {
+          // Default rectangle for narration
+          bubblePath = `
+            <rect x="${x-bubbleWidth/2}" y="${y-bubbleHeight/2}" width="${bubbleWidth}" height="${bubbleHeight}" 
+                  fill="${bgFill}" stroke="black" stroke-width="2" rx="5" ry="5" />
+          `;
+        }
+        
+        // Font settings
+        const fontSize = style.fontSize || 18;
+        const fontWeight = style.bold ? 'bold' : 'normal';
+        const fontStyle = style.italic ? 'italic' : 'normal';
+        
+        // Add text with line wrapping (simple wrapping at 20 chars per line)
+        let textElement = `
+          <text x="${x}" y="${y-20}" 
+                text-anchor="middle" 
+                font-family="Arial, sans-serif" 
+                font-size="${fontSize}px"
+                font-weight="${fontWeight}"
+                font-style="${fontStyle}"
+                fill="${textFill}">
+        `;
+        
+        // Simple text wrapping (for demo purposes)
+        const words = text.split(' ');
+        let line = '';
+        let lineCount = 0;
+        
+        for (const word of words) {
+          if ((line + word).length > 20) {
+            textElement += `<tspan x="${x}" dy="${lineCount === 0 ? 0 : fontSize * 1.2}" xml:space="preserve">${line}</tspan>`;
+            line = word + ' ';
+            lineCount++;
+          } else {
+            line += word + ' ';
+          }
+        }
+        
+        if (line) {
+          textElement += `<tspan x="${x}" dy="${lineCount === 0 ? 0 : fontSize * 1.2}" xml:space="preserve">${line}</tspan>`;
+        }
+        
+        textElement += `</text>`;
+        
+        // Add bubble and text to SVG
+        svgOverlay += bubblePath + textElement;
+      } catch (boxError) {
+        console.error(`Error processing text box:`, boxError);
+        console.error('Box data:', box);
+        // Continue with other boxes
+      }
+    }
+    
+    // Close SVG
+    svgOverlay += `</svg>`;
+    
+    // Create overlay buffer
+    const overlayBuffer = Buffer.from(svgOverlay);
+    
+    // Composite the image with the SVG overlay
+    await sharp(imageBuffer)
+      .composite([
+        {
+          input: overlayBuffer,
+          top: 0,
+          left: 0
+        }
+      ])
+      .toFile(outputPath);
+    
+    // Return the path to the composited image
+    return res.json({
+      success: true,
+      message: `Successfully composited ${textBoxes.length} text bubbles`,
+      imagePath: `/outputs/${filename}`
+    });
+    
+  } catch (error) {
+    console.error('Error composing manga panel:', error);
+    return res.status(500).json({
+      success: false,
+      message: `Error composing manga panel: ${error.message}`
+    });
   }
 });

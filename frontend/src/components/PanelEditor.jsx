@@ -1,5 +1,6 @@
 import React from 'react';
 import { Bubble } from './';
+import { textBoxToBubbleProps } from '../utils/bubbleUtils';
 
 const PanelEditor = ({
   selectedPanel,
@@ -24,6 +25,23 @@ const PanelEditor = ({
       </div>
     );
   }
+
+  // Function to handle text box position change
+  const handlePositionChange = (textBoxId, newPosition) => {
+    onUpdateTextBox(selectedPanel.id, textBoxId, { position: newPosition });
+  };
+
+  // Function to handle text box text change
+  const handleTextChange = (textBoxId, newText) => {
+    onUpdateTextBox(selectedPanel.id, textBoxId, { text: newText });
+  };
+
+  // Function to handle text box selection
+  const handleSelectTextBox = (textBoxId) => {
+    // This function would be used to select the text box in the parent
+    // For now, we're just highlighting it in the bubble component
+    console.log(`Selected text box: ${textBoxId}`);
+  };
 
   return (
     <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg">
@@ -160,15 +178,19 @@ const PanelEditor = ({
               <p className="text-gray-500">No image selected</p>
             </div>
           )}
+          {/* Render bubble components with proper props for interaction */}
           {selectedPanel.textBoxes?.map((textBox) => (
             <Bubble
               key={textBox.id}
-              type={textBox.type}
-              text={textBox.text}
-              position={textBox.position}
-              style={textBox.style}
-              selected={false}
-              draggable={false}
+              {...textBoxToBubbleProps(textBox, {
+                onTextChange: (newText) => handleTextChange(textBox.id, newText),
+                onPositionChange: (newPosition) => handlePositionChange(textBox.id, newPosition),
+                onRemove: () => onDeleteTextBox(selectedPanel.id, textBox.id),
+                onSelect: () => handleSelectTextBox(textBox.id),
+                selected: false,
+                draggable: true,
+                editable: true
+              })}
             />
           ))}
         </div>

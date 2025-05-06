@@ -56,11 +56,11 @@ const LoginPage = () => {
       if (isLogin) {
         // Login user
         const userCredential = await signInWithEmailAndPassword(auth, email, password);
-        navigate('/studio');
+        navigate('/manga-studio');
       } else {
         // Register user
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        navigate('/studio');
+        navigate('/manga-studio');
       }
     } catch (error) {
       console.error('Authentication error:', error);
@@ -89,7 +89,7 @@ const LoginPage = () => {
             setShowUsernameModal(true);
           } else {
             console.log("Existing user - navigating to studio");
-            navigate('/studio');
+            navigate('/manga-studio');
           }
           setLoading(false);
           return;
@@ -127,7 +127,7 @@ const LoginPage = () => {
         } else {
           // Existing user, proceed normally
           console.log("Existing user - navigating to studio");
-          navigate('/studio');
+          navigate('/manga-studio');
         }
       }
     } catch (error) {
@@ -142,13 +142,13 @@ const LoginPage = () => {
     // Username has been set, close modal and complete login
     setShowUsernameModal(false);
     setPendingGoogleUser({...pendingGoogleUser, displayName: username});
-    navigate('/studio');
+    navigate('/manga-studio');
   };
 
   const handleUsernameSkip = () => {
     // User skipped setting a username
     setShowUsernameModal(false);
-    navigate('/studio');
+    navigate('/manga-studio');
   };
 
   const handleAuthError = (errorMessage) => {

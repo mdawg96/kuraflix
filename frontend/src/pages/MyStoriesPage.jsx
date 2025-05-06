@@ -4,8 +4,9 @@ import { collection, query, where, getDocs, orderBy, deleteDoc, doc } from 'fire
 import { db } from '../firebase/config';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'react-hot-toast';
-// Import placeholder image
-import fallbackImage from '../assets/images/placeholders/image.png';
+// Import placeholder images
+import mangaPlaceholderImage from '../assets/images/placeholders/manga.png';
+import animePlaceholderImage from '../assets/images/placeholders/anime.png';
 import MangaViewer from '../components/MangaViewer';
 
 const MyStoriesPage = () => {
@@ -205,9 +206,14 @@ const MyStoriesPage = () => {
   }, [currentUser]);
 
   // Function to handle image load errors
-  const handleImageError = (e) => {
+  const handleImageError = (e, contentType) => {
     console.warn('Image failed to load, using fallback image instead.');
-    e.target.src = fallbackImage;
+    // Use the appropriate placeholder based on content type
+    if (contentType === 'manga') {
+      e.target.src = mangaPlaceholderImage;
+    } else {
+      e.target.src = animePlaceholderImage;
+    }
     e.target.onerror = null; // Prevent infinite loop
   };
   
@@ -309,7 +315,7 @@ const MyStoriesPage = () => {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
           </svg>
         </button>
-        <MangaViewer manga={viewingManga} />
+        <MangaViewer manga={viewingManga} onExit={exitMangaView} />
       </>
     );
   }
@@ -383,7 +389,7 @@ const MyStoriesPage = () => {
                       src={manga.thumbnail} 
                       alt={manga.title} 
                       className="w-full h-full object-cover" 
-                      onError={handleImageError}
+                      onError={(e) => handleImageError(e, manga.contentType)}
                     />
                   ) : (
                     <div className="text-center">
@@ -435,10 +441,10 @@ const MyStoriesPage = () => {
               {stories.map(story => (
                 <div key={story.id} className="card overflow-hidden">
                 <img 
-                  src={story.thumbnailUrl || fallbackImage} 
+                  src={story.thumbnailUrl || animePlaceholderImage} 
                   alt={story.title || 'Untitled'} 
                   className="w-full h-48 object-cover cursor-pointer" 
-                  onError={handleImageError}
+                  onError={(e) => handleImageError(e, story.source === 'animeProject' ? 'anime' : 'publishedVideos')}
                   onClick={() => playVideo(story)}
                 />
                   <div className="p-4">

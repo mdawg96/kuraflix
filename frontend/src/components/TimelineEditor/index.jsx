@@ -13,6 +13,45 @@ import { startDrag, handleDrag, endDrag } from './handlers/DragHandlers';
 // Import components
 import SnapIndicator from './components/SnapIndicator';
 
+// Helper function to format dates for display
+const formatDate = (dateString) => {
+  if (!dateString) return null;
+  
+  try {
+    const date = new Date(dateString);
+    // Check if date is valid
+    if (isNaN(date.getTime())) return null;
+    
+    // Get current date for comparison
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    // If it's today, show time
+    if (date >= today) {
+      return `Today at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    }
+    // If it's yesterday, show "Yesterday"
+    else if (date >= yesterday && date < today) {
+      return `Yesterday at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    }
+    // Otherwise show full date
+    else {
+      return date.toLocaleDateString([], { 
+        year: 'numeric', 
+        month: 'short', 
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    }
+  } catch (e) {
+    console.error("Error formatting date:", e);
+    return null;
+  }
+};
+
 const TimelineEditor = ({
   scenes,
   currentScene,
@@ -30,7 +69,8 @@ const TimelineEditor = ({
   onOpenClipEditor,
   onUpdateClip,
   onDeleteClip,
-  onSaveProject
+  onSaveProject,
+  currentProject
 }) => {
   // Timeline state
   const [currentTime, setCurrentTime] = useState(0);
@@ -943,157 +983,109 @@ const TimelineEditor = ({
   };
   
   return (
-    <div className="text-white">
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* Timeline and Preview Column - Takes up 3/4 of the screen on large displays */}
-        <div className="lg:col-span-3">
-          {/* Top navigation and controls */}
-          <div className="flex justify-between mb-4">
-            <button
-              onClick={onBackToProjects}
-              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded flex items-center"
-            >
-              <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-              </svg>
-              Back to Projects
-            </button>
-            
-            <div className="flex items-center space-x-2 px-3 py-1 bg-gray-800 rounded-lg border border-gray-700">
+    <div className="timeline-editor w-full h-full flex flex-col bg-gray-900">
+      {/* Top toolbar */}
+      <div className="top-toolbar p-4 bg-gray-800 flex justify-between items-center border-b border-gray-700">
+        <div className="flex items-center">
+          <button 
+            onClick={onBackToProjects}
+            className="px-3 py-1 bg-gray-700 text-gray-200 hover:bg-gray-600 rounded-md flex items-center mr-4"
+          >
+            <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+            Back
+          </button>
+          
+          <input 
+            type="text" 
+            value={storyTitle}
+            onChange={e => setStoryTitle(e.target.value)}
+            placeholder="Project Title" 
+            className="bg-gray-700 text-white px-3 py-1 rounded-md w-64 mr-2"
+          />
+          
+          <input 
+            type="text" 
+            value={author}
+            onChange={e => setAuthor(e.target.value)}
+            placeholder="Author"
+            className="bg-gray-700 text-white px-3 py-1 rounded-md w-48"
+          />
+        </div>
+        
+        <div className="flex items-center">
+          <button 
+            onClick={() => {
+              if (onSaveProject) {
+                onSaveProject();
+              }
+            }}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md mr-3 flex items-center"
+          >
+            <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+            </svg>
+            Save
+          </button>
+          
+          {/* Last saved information */}
+          {currentProject?.lastSaved && (
+            <div className="mr-3 text-center">
+              <p className="text-xs text-green-400 flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Saved: {formatDate(currentProject.lastSaved)}
+              </p>
+            </div>
+          )}
+          
+          <button 
+            onClick={() => onShowPublishModal && onShowPublishModal()}
+            className={`px-4 py-2 ${currentProject?.published ? 'bg-green-700' : 'bg-green-600 hover:bg-green-700'} text-white rounded-md flex items-center`}
+          >
+            <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            {currentProject?.published ? 'Update Published' : 'Publish'}
+          </button>
+          
+          {/* Published status information */}
+          {currentProject?.published && (
+            <div className="ml-2 text-center">
+              <div className="text-xs text-green-400 flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Published {currentProject.lastPublished ? formatDate(currentProject.lastPublished) : ''}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+      
+      {/* Rest of timeline editor content */}
+      <div className="text-white">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          {/* Timeline and Preview Column - Takes up 3/4 of the screen on large displays */}
+          <div className="lg:col-span-3">
+            {/* Top navigation and controls */}
+            <div className="flex justify-between mb-4">
               <button
-                onClick={togglePlayPause}
-                className="p-1.5 bg-gray-700 hover:bg-gray-600 text-white rounded-full"
-                title={isPlaying ? "Pause" : "Play"}
+                onClick={onBackToProjects}
+                className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded flex items-center"
               >
-                {isPlaying ? (
-                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
-                  </svg>
-                ) : (
-                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
-                )}
+                <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                </svg>
+                Back to Projects
               </button>
               
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={scrubPosition}
-                onChange={handleScrubberChange}
-                className="w-48"
-              />
-              
-              <span className="text-gray-300 text-sm font-mono">
-                {formatTime(currentTime)} / {formatTime(totalDuration)}
-              </span>
-            </div>
-          </div>
-          
-          {/* Video Preview Area */}
-          <div className="bg-gray-900 rounded-lg mb-4 overflow-hidden relative border border-gray-700">
-            <div className="aspect-[9/16] max-w-[500px] mx-auto bg-black flex items-center justify-center overflow-hidden relative">
-              <div className="absolute inset-0 flex items-center justify-center z-10" id="preview-placeholder" 
-                   style={{ opacity: isPlaying ? 0 : 1, transition: 'opacity 0.3s ease' }}>
-                {/* Placeholder visible when not playing */}
-                <div className="text-gray-500 text-center">
-                  <div className="text-xl font-bold">Timeline Preview</div>
-                  <div className="text-sm">Clips will be shown here during playback</div>
-                </div>
-              </div>
-              
-              {/* Video element for playback */}
-              <video 
-                ref={videoRef}
-                className="absolute inset-0 w-full h-full object-contain z-20"
-                playsInline
-                muted
-                style={{ display: 'none' }}
-              />
-              
-              {/* Static image preview element */}
-              <div 
-                id="static-image-preview" 
-                className="absolute inset-0 w-full h-full z-20"
-                style={{ display: 'none' }}
-              >
-                <img 
-                  id="static-preview-img" 
-                  className="w-full h-full object-contain" 
-                  src="" 
-                  alt="Static preview" 
-                />
-              </div>
-              
-              {/* Hidden audio element for playback */}
-              <audio 
-                ref={audioRef}
-                className="hidden"
-              />
-            </div>
-          </div>
-          
-          {/* Timeline */}
-          <div className="bg-gray-900 rounded-lg p-4 border border-gray-700" ref={timelineRef}>
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-white font-medium">Timeline</h3>
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={handleZoomOut}
-                  className="p-1 bg-gray-700 hover:bg-gray-600 text-white rounded"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
-                  </svg>
-                </button>
-                <span className="text-white text-sm">{Math.round(zoomLevel * 100)}%</span>
-                <button
-                  onClick={handleZoomIn}
-                  className="p-1 bg-gray-700 hover:bg-gray-600 text-white rounded"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            
-            {/* Timeline scroll controls */}
-            <div className="flex justify-between items-center mb-2">
-              <div className="flex space-x-2">
-                <button
-                  onClick={() => {
-                    const container = document.querySelector('.timeline-scroll-container');
-                    if (container) {
-                      container.scrollBy({ left: -200, behavior: 'smooth' });
-                    }
-                  }}
-                  className="p-1.5 bg-gray-700 hover:bg-gray-600 text-white rounded"
-                  title="Scroll left"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                  </svg>
-                </button>
-                <button
-                  onClick={() => {
-                    const container = document.querySelector('.timeline-scroll-container');
-                    if (container) {
-                      container.scrollBy({ left: 200, behavior: 'smooth' });
-                    }
-                  }}
-                  className="p-1.5 bg-gray-700 hover:bg-gray-600 text-white rounded"
-                  title="Scroll right"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
-                </button>
-                
+              <div className="flex items-center space-x-2 px-3 py-1 bg-gray-800 rounded-lg border border-gray-700">
                 <button
                   onClick={togglePlayPause}
-                  className="p-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-full flex items-center justify-center"
+                  className="p-1.5 bg-gray-700 hover:bg-gray-600 text-white rounded-full"
                   title={isPlaying ? "Pause" : "Play"}
                 >
                   {isPlaying ? (
@@ -1106,531 +1098,663 @@ const TimelineEditor = ({
                     </svg>
                   )}
                 </button>
-              </div>
-              <div className="text-xs text-gray-400">
-                {formatTime(currentTime)} / {formatTime(totalDuration)}
+                
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={scrubPosition}
+                  onChange={handleScrubberChange}
+                  className="w-48"
+                />
+                
+                <span className="text-gray-300 text-sm font-mono">
+                  {formatTime(currentTime)} / {formatTime(totalDuration)}
+                </span>
               </div>
             </div>
             
-            {/* Timeline container with horizontal scrolling */}
-            <div className="overflow-x-auto timeline-scroll-container">
-              <div className="min-w-max">
-                {/* Time markers */}
-                <div className="flex h-6 border-b border-gray-700 mb-1"
-                  onClick={(e) => {
-                    // Get the container and its dimensions
-                    const container = e.currentTarget.parentElement;
-                    if (!container) return;
-                    
-                    const containerRect = container.getBoundingClientRect();
-                    const trackContainer = container.closest('.timeline-scroll-container');
-                    if (!trackContainer) return;
-                    
-                    const scrollLeft = trackContainer.scrollLeft;
-                    
-                    // Calculate click position relative to the time markers
-                    const clickX = e.clientX - containerRect.left + scrollLeft;
-                    
-                    // Convert to time
-                    const clickTime = (clickX / (100 * zoomLevel));
-                    
-                    // Set the current time and scrub position
-                    const newTime = Math.min(Math.max(0, clickTime), totalDuration);
-                    setCurrentTime(newTime);
-                    setScrubPosition((newTime / totalDuration) * 100);
-                    
-                    // Scroll to make the time visible
-                    scrollToCurrentTimeWrapper();
-                  }}
-                >
-                  {/* Use a more precise time marker positioning */}
-                  {Array.from({ length: 121 }).map((_, i) => (
-                    <div 
-                      key={`time-${i}`} 
-                      className="text-gray-500 text-xs flex-shrink-0 relative" 
-                      style={{ 
-                        width: `${100 * zoomLevel}px`,
-                        borderLeft: i > 0 ? '1px solid rgba(75, 85, 99, 0.5)' : 'none'
-                      }}
-                    >
-                      <span className="absolute left-1">{formatTime(i)}</span>
-                    </div>
-                  ))}
+            {/* Video Preview Area */}
+            <div className="bg-gray-900 rounded-lg mb-4 overflow-hidden relative border border-gray-700">
+              <div className="aspect-[9/16] max-w-[500px] mx-auto bg-black flex items-center justify-center overflow-hidden relative">
+                <div className="absolute inset-0 flex items-center justify-center z-10" id="preview-placeholder" 
+                     style={{ opacity: isPlaying ? 0 : 1, transition: 'opacity 0.3s ease' }}>
+                  {/* Placeholder visible when not playing */}
+                  <div className="text-gray-500 text-center">
+                    <div className="text-xl font-bold">Timeline Preview</div>
+                    <div className="text-sm">Clips will be shown here during playback</div>
+                  </div>
                 </div>
                 
-                {/* Timeline tracks */}
-                <div className="flex flex-col space-y-2 relative">
-                  {/* Position guide for snapping */}
-                  {positionGuide && (
-                    <SnapIndicator 
-                      position={positionGuide.position} 
-                      type={positionGuide.snapType || "time"} 
-                    />
-                  )}
+                {/* Video element for playback */}
+                <video 
+                  ref={videoRef}
+                  className="absolute inset-0 w-full h-full object-contain z-20"
+                  playsInline
+                  muted
+                  style={{ display: 'none' }}
+                />
+                
+                {/* Static image preview element */}
+                <div 
+                  id="static-image-preview" 
+                  className="absolute inset-0 w-full h-full z-20"
+                  style={{ display: 'none' }}
+                >
+                  <img 
+                    id="static-preview-img" 
+                    className="w-full h-full object-contain" 
+                    src="" 
+                    alt="Static preview" 
+                  />
+                </div>
+                
+                {/* Hidden audio element for playback */}
+                <audio 
+                  ref={audioRef}
+                  className="hidden"
+                />
+              </div>
+            </div>
+            
+            {/* Timeline */}
+            <div className="bg-gray-900 rounded-lg p-4 border border-gray-700" ref={timelineRef}>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-white font-medium">Timeline</h3>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={handleZoomOut}
+                    className="p-1 bg-gray-700 hover:bg-gray-600 text-white rounded"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                    </svg>
+                  </button>
+                  <span className="text-white text-sm">{Math.round(zoomLevel * 100)}%</span>
+                  <button
+                    onClick={handleZoomIn}
+                    className="p-1 bg-gray-700 hover:bg-gray-600 text-white rounded"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              
+              {/* Timeline scroll controls */}
+              <div className="flex justify-between items-center mb-2">
+                <div className="flex space-x-2">
+                  <button
+                    onClick={() => {
+                      const container = document.querySelector('.timeline-scroll-container');
+                      if (container) {
+                        container.scrollBy({ left: -200, behavior: 'smooth' });
+                      }
+                    }}
+                    className="p-1.5 bg-gray-700 hover:bg-gray-600 text-white rounded"
+                    title="Scroll left"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => {
+                      const container = document.querySelector('.timeline-scroll-container');
+                      if (container) {
+                        container.scrollBy({ left: 200, behavior: 'smooth' });
+                      }
+                    }}
+                    className="p-1.5 bg-gray-700 hover:bg-gray-600 text-white rounded"
+                    title="Scroll right"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
                   
-                  {/* Playhead */}
-                  <div
-                    className="absolute top-0 h-full w-5 cursor-col-resize z-30"
-                    style={{
-                      left: `${currentTime * 100 * zoomLevel}px`,
-                      height: '100%',
-                      transform: 'translateX(-50%)',
-                      touchAction: 'none',
+                  <button
+                    onClick={togglePlayPause}
+                    className="p-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-full flex items-center justify-center"
+                    title={isPlaying ? "Pause" : "Play"}
+                  >
+                    {isPlaying ? (
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M8 5v14l11-7z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+                <div className="text-xs text-gray-400">
+                  {formatTime(currentTime)} / {formatTime(totalDuration)}
+                </div>
+              </div>
+              
+              {/* Timeline container with horizontal scrolling */}
+              <div className="overflow-x-auto timeline-scroll-container">
+                <div className="min-w-max">
+                  {/* Time markers */}
+                  <div className="flex h-6 border-b border-gray-700 mb-1"
+                    onClick={(e) => {
+                      // Get the container and its dimensions
+                      const container = e.currentTarget.parentElement;
+                      if (!container) return;
+                      
+                      const containerRect = container.getBoundingClientRect();
+                      const trackContainer = container.closest('.timeline-scroll-container');
+                      if (!trackContainer) return;
+                      
+                      const scrollLeft = trackContainer.scrollLeft;
+                      
+                      // Calculate click position relative to the time markers
+                      const clickX = e.clientX - containerRect.left + scrollLeft;
+                      
+                      // Convert to time
+                      const clickTime = (clickX / (100 * zoomLevel));
+                      
+                      // Set the current time and scrub position
+                      const newTime = Math.min(Math.max(0, clickTime), totalDuration);
+                      setCurrentTime(newTime);
+                      setScrubPosition((newTime / totalDuration) * 100);
+                      
+                      // Scroll to make the time visible
+                      scrollToCurrentTimeWrapper();
                     }}
                   >
-                    <div className="absolute top-0 bottom-0 left-1/2 w-0.5 bg-red-500 transform -translate-x-1/2"></div>
-                    <div className="absolute top-0 left-1/2 transform -translate-x-1/2 w-3 h-3 bg-red-500 rounded-full"></div>
-                  </div>
-                  
-                  {/* Video track */}
-                  <div className="video-track-container overflow-hidden">
-                    <div className="text-gray-400 text-xs mb-1">Video</div>
-                    <div className="relative" ref={videoTrackRef}>
+                    {/* Use a more precise time marker positioning */}
+                    {Array.from({ length: 121 }).map((_, i) => (
                       <div 
-                        className="flex h-10 bg-gray-700 rounded-lg relative"
+                        key={`time-${i}`} 
+                        className="text-gray-500 text-xs flex-shrink-0 relative" 
                         style={{ 
-                          width: `${Math.max(Math.min(totalDuration, 120), 120) * 100 * zoomLevel}px`, 
-                          minWidth: '500px'
+                          width: `${100 * zoomLevel}px`,
+                          borderLeft: i > 0 ? '1px solid rgba(75, 85, 99, 0.5)' : 'none'
                         }}
                       >
-                        {/* Video clips */}
-                        {localClips
-                          .filter(clip => clip.type === 'video' || clip.type === 'static')
-                          .map((clip, clipIndex) => (
-                            renderClip(clip, clipIndex))
-                          )}
+                        <span className="absolute left-1">{formatTime(i)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {/* Timeline tracks */}
+                  <div className="flex flex-col space-y-2 relative">
+                    {/* Position guide for snapping */}
+                    {positionGuide && (
+                      <SnapIndicator 
+                        position={positionGuide.position} 
+                        type={positionGuide.snapType || "time"} 
+                      />
+                    )}
+                    
+                    {/* Playhead */}
+                    <div
+                      className="absolute top-0 h-full w-5 cursor-col-resize z-30"
+                      style={{
+                        left: `${currentTime * 100 * zoomLevel}px`,
+                        height: '100%',
+                        transform: 'translateX(-50%)',
+                        touchAction: 'none',
+                      }}
+                    >
+                      <div className="absolute top-0 bottom-0 left-1/2 w-0.5 bg-red-500 transform -translate-x-1/2"></div>
+                      <div className="absolute top-0 left-1/2 transform -translate-x-1/2 w-3 h-3 bg-red-500 rounded-full"></div>
+                    </div>
+                    
+                    {/* Video track */}
+                    <div className="video-track-container overflow-hidden">
+                      <div className="text-gray-400 text-xs mb-1">Video</div>
+                      <div className="relative" ref={videoTrackRef}>
+                        <div 
+                          className="flex h-10 bg-gray-700 rounded-lg relative"
+                          style={{ 
+                            width: `${Math.max(Math.min(totalDuration, 120), 120) * 100 * zoomLevel}px`, 
+                            minWidth: '500px'
+                          }}
+                        >
+                          {/* Video clips */}
+                          {localClips
+                            .filter(clip => clip.type === 'video' || clip.type === 'static')
+                            .map((clip, clipIndex) => (
+                              renderClip(clip, clipIndex))
+                            )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  
-                  {/* Sound track - Similar structure to video track */}
-                  <div className="sound-track-container overflow-hidden">
-                    <div className="text-gray-400 text-xs mb-1">Sound</div>
-                    <div className="relative">
-                      <div 
-                        className="flex h-10 bg-gray-700 rounded-lg relative"
-                        style={{ 
-                          width: `${Math.max(Math.min(totalDuration, 120), 120) * 100 * zoomLevel}px`, 
-                          minWidth: '500px'
-                        }}
-                      >
-                        {/* Sound clips */}
-                        {localClips
-                          .filter(clip => clip.type === 'sound')
-                          .map((clip, clipIndex) => (
-                            renderClip(clip, clipIndex))
-                          )}
+                    
+                    {/* Sound track - Similar structure to video track */}
+                    <div className="sound-track-container overflow-hidden">
+                      <div className="text-gray-400 text-xs mb-1">Sound</div>
+                      <div className="relative">
+                        <div 
+                          className="flex h-10 bg-gray-700 rounded-lg relative"
+                          style={{ 
+                            width: `${Math.max(Math.min(totalDuration, 120), 120) * 100 * zoomLevel}px`, 
+                            minWidth: '500px'
+                          }}
+                        >
+                          {/* Sound clips */}
+                          {localClips
+                            .filter(clip => clip.type === 'sound')
+                            .map((clip, clipIndex) => (
+                              renderClip(clip, clipIndex))
+                            )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  
-                  {/* Narration track - Similar structure to video track */}
-                  <div className="narration-track-container overflow-hidden">
-                    <div className="text-gray-400 text-xs mb-1">Narration</div>
-                    <div className="relative">
-                      <div 
-                        className="flex h-10 bg-gray-700 rounded-lg relative"
-                        style={{ 
-                          width: `${Math.max(Math.min(totalDuration, 120), 120) * 100 * zoomLevel}px`, 
-                          minWidth: '500px'
-                        }}
-                      >
-                        {/* Narration clips */}
-                        {localClips
-                          .filter(clip => clip.type === 'narration')
-                          .map((clip, clipIndex) => (
-                            renderClip(clip, clipIndex))
-                          )}
+                    
+                    {/* Narration track - Similar structure to video track */}
+                    <div className="narration-track-container overflow-hidden">
+                      <div className="text-gray-400 text-xs mb-1">Narration</div>
+                      <div className="relative">
+                        <div 
+                          className="flex h-10 bg-gray-700 rounded-lg relative"
+                          style={{ 
+                            width: `${Math.max(Math.min(totalDuration, 120), 120) * 100 * zoomLevel}px`, 
+                            minWidth: '500px'
+                          }}
+                        >
+                          {/* Narration clips */}
+                          {localClips
+                            .filter(clip => clip.type === 'narration')
+                            .map((clip, clipIndex) => (
+                              renderClip(clip, clipIndex))
+                            )}
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
+              
+              {/* Timeline controls */}
+              <div className="flex justify-between mt-4">
+                <div className="text-gray-400 text-xs">
+                  <span className="mr-2"><i className="fas fa-arrows-alt"></i> Drag to reposition clips</span>
+                  <span className="mr-2">•</span>
+                  <span>Clips will automatically snap to avoid gaps</span>
+                </div>
+                <div>
+                  <button
+                    onClick={handleAddVideoClick}
+                    className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm mr-2"
+                  >
+                    Add Video
+                  </button>
+                  <button
+                    onClick={() => onAddClip('sound')}
+                    className="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-sm mr-2"
+                  >
+                    Add Sound
+                  </button>
+                  <button
+                    onClick={() => onAddClip('narration')}
+                    className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-sm"
+                  >
+                    Add Narration
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          {/* Right Sidebar - Clip Properties or Media Library */}
+          <div className="lg:col-span-1">
+            {/* Story Editor Tab */}
+            <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg mb-6">
+              <h2 className="text-xl font-bold text-white mb-4">Story Editor</h2>
+              <div className="text-amber-400 text-sm mb-3 p-2 bg-amber-900 bg-opacity-30 rounded-md">
+                Please complete these fields before saving or exporting your animation.
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-gray-400 text-sm mb-1">Story Title</label>
+                  <input
+                    type="text"
+                    value={storyTitle}
+                    onChange={(e) => setStoryTitle(e.target.value)}
+                    placeholder="Enter story title"
+                    className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2"
+                  />
+                  </div>
+                
+                <div>
+                  <label className="block text-gray-400 text-sm mb-1">Author</label>
+                  <input
+                    type="text"
+                    value={author}
+                    onChange={(e) => setAuthor(e.target.value)}
+                    placeholder="Enter author name"
+                    className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-gray-400 text-sm mb-1">Description</label>
+                  <textarea
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Describe your story"
+                    className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2 h-24"
+                  />
+                </div>
+                
+                <button
+                  onClick={onSaveProject}
+                  className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded mb-2 relative overflow-hidden flex items-center justify-center gap-2 font-bold"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                  SAVE PROJECT
+                </button>
+                
+                <div className="text-xs text-gray-400 mb-2 text-center bg-gray-700 p-2 rounded border border-gray-600">
+                  <strong className="text-yellow-400">Important:</strong> Your work is not saved automatically. Click "Save Project" to store your changes.
+                </div>
+                
+                <button
+                  onClick={onShowPublishModal}
+                  className="w-full px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded"
+                >
+                  Export Animation
+              </button>
+              </div>
             </div>
             
-            {/* Timeline controls */}
-            <div className="flex justify-between mt-4">
-              <div className="text-gray-400 text-xs">
-                <span className="mr-2"><i className="fas fa-arrows-alt"></i> Drag to reposition clips</span>
-                <span className="mr-2">•</span>
-                <span>Clips will automatically snap to avoid gaps</span>
-              </div>
-              <div>
-                <button
-                  onClick={handleAddVideoClick}
-                  className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm mr-2"
-                >
-                  Add Video
-                </button>
-                <button
-                  onClick={() => onAddClip('sound')}
-                  className="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-sm mr-2"
-                >
-                  Add Sound
-                </button>
-                <button
-                  onClick={() => onAddClip('narration')}
-                  className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-sm"
-                >
-                  Add Narration
-                </button>
-              </div>
+            {/* Clip Properties Tab */}
+            <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg">
+              <h2 className="text-xl font-bold text-white mb-4">Clip Properties</h2>
+              {selectedClip && localClips.some(clip => clip.id === selectedClip.id) ? (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-gray-400 text-sm mb-1">Clip Type</label>
+                    <div className="text-white capitalize">{selectedClip.type}</div>
+                  </div>
+                  
+                  {/* New clip timing controls */}
+                  <div className="border border-gray-700 rounded p-4 bg-gray-800">
+                    <h3 className="text-white text-sm font-semibold mb-4">Clip Timing Controls</h3>
+                    
+                    {/* Duration display */}
+                    <div className="bg-gray-900 p-2 rounded mb-4 text-center">
+                      <div className="text-gray-400 text-xs mb-1">Total Duration</div>
+                      <div className="text-white text-lg font-mono">{(selectedClip.endTime - selectedClip.startTime).toFixed(1)}s</div>
+                    </div>
+
+                    {/* Clip position control */}
+                    <div className="mb-5 pb-4 border-b border-gray-700">
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="text-gray-300 font-medium">Clip Position</label>
+                        <div className="text-gray-400 text-xs">
+                          Current: {selectedClip.startTime.toFixed(1)}s
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-2">
+                        {/* Position adjustment buttons */}
+                        <button 
+                          onClick={() => {
+                            const newPos = Math.max(0, selectedClip.startTime - 0.1);
+                            handleClipPositionChange(selectedClip.id, newPos.toFixed(1));
+                          }}
+                          className="bg-gray-700 hover:bg-gray-600 text-white w-8 h-8 rounded flex items-center justify-center"
+                        >
+                          <span className="text-xl">-</span>
+                        </button>
+                        
+                        {/* Position input field */}
+                        <div className="flex-1">
+                          <input
+                            type="text"
+                            value={inputValues.position !== null ? inputValues.position : selectedClip.startTime.toFixed(1)}
+                            onChange={handlePositionInputChange}
+                            onBlur={applyPositionChange}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.target.blur();
+                              }
+                            }}
+                            className="w-full bg-gray-600 text-white border border-gray-500 rounded px-3 py-2 text-center"
+                          />
+                        </div>
+                        
+                        <button 
+                          onClick={() => {
+                            const maxPos = 120 - (selectedClip.endTime - selectedClip.startTime);
+                            const newPos = Math.min(maxPos, selectedClip.startTime + 0.1);
+                            handleClipPositionChange(selectedClip.id, newPos.toFixed(1));
+                          }}
+                          className="bg-gray-700 hover:bg-gray-600 text-white w-8 h-8 rounded flex items-center justify-center"
+                        >
+                          <span className="text-xl">+</span>
+                        </button>
+                      </div>
+                      
+                      <div className="text-xs text-gray-400 mt-1 text-center">
+                        Moves entire clip without changing duration
+                      </div>
+                    </div>
+                    
+                    {/* Start time adjustment */}
+                    <div className="mb-5 pb-4 border-b border-gray-700">
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="text-gray-300 font-medium">Start Time</label>
+                        <div className="text-gray-400 text-xs">
+                          Current: {selectedClip.startTime.toFixed(1)}s
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={() => {
+                            // Move start time earlier (decrease) - makes clip longer
+                            const newStart = Math.max(0, selectedClip.startTime - 0.1);
+                            handleClipTimeAdjustment(selectedClip.id, 'startTime', newStart.toFixed(1));
+                          }}
+                          className="bg-blue-800 hover:bg-blue-700 text-white w-8 h-8 rounded flex items-center justify-center"
+                          title="Extend clip start"
+                        >
+                          <span className="text-xl">←</span>
+                        </button>
+                        
+                        {/* Start time input field */}
+                        <div className="flex-1">
+                          <input
+                            type="text"
+                            value={inputValues.startTime !== null ? inputValues.startTime : selectedClip.startTime.toFixed(1)}
+                            onChange={handleStartTimeInputChange}
+                            onBlur={applyStartTimeChange}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.target.blur();
+                              }
+                            }}
+                            className="w-full bg-blue-900 bg-opacity-30 text-white border border-blue-700 rounded px-3 py-2 text-center"
+                          />
+                        </div>
+                        
+                        <button 
+                          onClick={() => {
+                            // Move start time later (increase) - makes clip shorter
+                            const minDuration = 0.5; // Minimum clip duration in seconds
+                            const newStart = Math.min(selectedClip.endTime - minDuration, selectedClip.startTime + 0.1);
+                            handleClipTimeAdjustment(selectedClip.id, 'startTime', newStart.toFixed(1));
+                          }}
+                          className="bg-blue-800 hover:bg-blue-700 text-white w-8 h-8 rounded flex items-center justify-center"
+                          title="Shorten clip start"
+                        >
+                          <span className="text-xl">→</span>
+                        </button>
+                      </div>
+                      
+                      <div className="text-xs text-gray-400 mt-1 text-center">
+                        Adjusts start point (keeps end fixed)
+                      </div>
+                    </div>
+                    
+                    {/* End time adjustment */}
+                    <div className="mb-2">
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="text-gray-300 font-medium">End Time</label>
+                        <div className="text-gray-400 text-xs">
+                          Current: {selectedClip.endTime.toFixed(1)}s
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={() => {
+                            // Move end time earlier (decrease) - makes clip shorter
+                            const minDuration = 0.5; // Minimum clip duration in seconds
+                            const newEnd = Math.max(selectedClip.startTime + minDuration, selectedClip.endTime - 0.1);
+                            handleClipTimeAdjustment(selectedClip.id, 'endTime', newEnd.toFixed(1));
+                          }}
+                          className="bg-green-800 hover:bg-green-700 text-white w-8 h-8 rounded flex items-center justify-center"
+                          title="Shorten clip end"
+                        >
+                          <span className="text-xl">←</span>
+                        </button>
+                        
+                        {/* End time input field */}
+                        <div className="flex-1">
+                          <input
+                            type="text"
+                            value={inputValues.endTime !== null ? inputValues.endTime : selectedClip.endTime.toFixed(1)}
+                            onChange={handleEndTimeInputChange}
+                            onBlur={applyEndTimeChange}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.target.blur();
+                              }
+                            }}
+                            className="w-full bg-green-900 bg-opacity-30 text-white border border-green-700 rounded px-3 py-2 text-center"
+                          />
+                        </div>
+                        
+                        <button 
+                          onClick={() => {
+                            // Move end time later (increase) - makes clip longer
+                            const newEnd = Math.min(120, selectedClip.endTime + 0.1);
+                            handleClipTimeAdjustment(selectedClip.id, 'endTime', newEnd.toFixed(1));
+                          }}
+                          className="bg-green-800 hover:bg-green-700 text-white w-8 h-8 rounded flex items-center justify-center"
+                          title="Extend clip end"
+                        >
+                          <span className="text-xl">→</span>
+                        </button>
+                      </div>
+                      
+                      <div className="text-xs text-gray-400 mt-1 text-center">
+                        Adjusts end point (keeps start fixed)
+                      </div>
+                    </div>
+                    
+                    {/* Timeline visualization */}
+                    <div className="mt-4">
+                      <div className="h-6 w-full bg-gray-900 rounded-md overflow-hidden relative">
+                        {/* Position indicator */}
+                        <div className="absolute top-0 bottom-0 bg-gray-800 rounded-md border border-gray-600" 
+                             style={{
+                               left: `${(selectedClip.startTime / 120) * 100}%`,
+                               width: `${((selectedClip.endTime - selectedClip.startTime) / 120) * 100}%`
+                             }}>
+                          <div className="flex items-center justify-center h-full text-xs text-gray-400">
+                            {(selectedClip.endTime - selectedClip.startTime).toFixed(1)}s
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex justify-between text-xs text-gray-500 mt-1">
+                        <span>0s</span>
+                        <span>30s</span>
+                        <span>60s</span>
+                        <span>90s</span>
+                        <span>120s</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Action buttons based on clip type */}
+                  <div className="space-y-2">
+                    {selectedClip.type === 'video' && (
+                      <button
+                        onClick={() => {
+                          if (clips.length > 0) {
+                            const clipIndex = clips.findIndex(c => c.id === selectedClip.id);
+                            if (clipIndex !== -1) {
+                              onOpenClipEditor(clipIndex);
+                            }
+                          }
+                        }}
+                        className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm"
+                      >
+                        Edit {selectedClip.type}
+                      </button>
+                    )}
+                    
+                    {selectedClip.type === 'sound' && (
+                      <button
+                        onClick={() => onAddClip('sound')}
+                        className="w-full px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded text-sm"
+                      >
+                        Replace Sound
+                      </button>
+                    )}
+                    
+                    {selectedClip.type === 'narration' && (
+                      <button
+                        onClick={() => {
+                          if (clips.length > 0) {
+                            const clipIndex = clips.findIndex(c => c.id === selectedClip.id);
+                            if (clipIndex !== -1) {
+                              onOpenClipEditor(clipIndex);
+                            }
+                          }
+                        }}
+                        className="w-full px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded text-sm"
+                      >
+                        Edit Narration
+                      </button>
+                    )}
+                    
+                    {/* Delete button for all clip types */}
+                    <button
+                      onClick={() => {
+                        if (onDeleteClip && selectedClip) {
+                          if (window.confirm(`Are you sure you want to delete this ${selectedClip.type} clip?`)) {
+                            onDeleteClip(selectedClip.id);
+                          }
+                        }
+                      }}
+                      className="w-full px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm"
+                    >
+                      Delete Clip
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-gray-400 text-center py-4">
+                  Select a clip to view properties
+                </div>
+              )}
             </div>
           </div>
         </div>
         
-        {/* Right Sidebar - Clip Properties or Media Library */}
-        <div className="lg:col-span-1">
-          {/* Story Editor Tab */}
-          <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg mb-6">
-            <h2 className="text-xl font-bold text-white mb-4">Story Editor</h2>
-            <div className="text-amber-400 text-sm mb-3 p-2 bg-amber-900 bg-opacity-30 rounded-md">
-              Please complete these fields before saving or exporting your animation.
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-gray-400 text-sm mb-1">Story Title</label>
-                <input
-                  type="text"
-                  value={storyTitle}
-                  onChange={(e) => setStoryTitle(e.target.value)}
-                  placeholder="Enter story title"
-                  className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2"
-                />
-                </div>
-              
-              <div>
-                <label className="block text-gray-400 text-sm mb-1">Author</label>
-                <input
-                  type="text"
-                  value={author}
-                  onChange={(e) => setAuthor(e.target.value)}
-                  placeholder="Enter author name"
-                  className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2"
-                />
-            </div>
-              
-              <div>
-                <label className="block text-gray-400 text-sm mb-1">Description</label>
-                <textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Describe your story"
-                  className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2 h-24"
-                />
-              </div>
-              
-              <button
-                onClick={onSaveProject}
-                className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded mb-2 relative overflow-hidden flex items-center justify-center gap-2 font-bold"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
-                </svg>
-                SAVE PROJECT
-              </button>
-              
-              <div className="text-xs text-gray-400 mb-2 text-center bg-gray-700 p-2 rounded border border-gray-600">
-                <strong className="text-yellow-400">Important:</strong> Your work is not saved automatically. Click "Save Project" to store your changes.
-              </div>
-              
-              <button
-                onClick={onShowPublishModal}
-                className="w-full px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded"
-              >
-                Export Animation
-            </button>
-            </div>
+        {/* Playback error message */}
+        {playbackError && (
+          <div className="bg-red-800 text-white px-3 py-2 rounded-md text-sm mb-2">
+            <p>
+              <strong>Audio playback failed:</strong> External audio files may be blocked by CORS policies. 
+              Consider uploading your own audio files instead of using direct FreePD links.
+            </p>
           </div>
-          
-          {/* Clip Properties Tab */}
-          <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg">
-            <h2 className="text-xl font-bold text-white mb-4">Clip Properties</h2>
-            {selectedClip && localClips.some(clip => clip.id === selectedClip.id) ? (
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-gray-400 text-sm mb-1">Clip Type</label>
-                  <div className="text-white capitalize">{selectedClip.type}</div>
-                </div>
-                
-                {/* New clip timing controls */}
-                <div className="border border-gray-700 rounded p-4 bg-gray-800">
-                  <h3 className="text-white text-sm font-semibold mb-4">Clip Timing Controls</h3>
-                  
-                  {/* Duration display */}
-                  <div className="bg-gray-900 p-2 rounded mb-4 text-center">
-                    <div className="text-gray-400 text-xs mb-1">Total Duration</div>
-                    <div className="text-white text-lg font-mono">{(selectedClip.endTime - selectedClip.startTime).toFixed(1)}s</div>
-                  </div>
-
-                  {/* Clip position control */}
-                  <div className="mb-5 pb-4 border-b border-gray-700">
-                    <div className="flex justify-between items-center mb-2">
-                      <label className="text-gray-300 font-medium">Clip Position</label>
-                      <div className="text-gray-400 text-xs">
-                        Current: {selectedClip.startTime.toFixed(1)}s
-                      </div>
-                    </div>
-                    
-                    <div className="flex items-center gap-2">
-                      {/* Position adjustment buttons */}
-                      <button 
-                        onClick={() => {
-                          const newPos = Math.max(0, selectedClip.startTime - 0.1);
-                          handleClipPositionChange(selectedClip.id, newPos.toFixed(1));
-                        }}
-                        className="bg-gray-700 hover:bg-gray-600 text-white w-8 h-8 rounded flex items-center justify-center"
-                      >
-                        <span className="text-xl">-</span>
-                      </button>
-                      
-                      {/* Position input field */}
-                      <div className="flex-1">
-                        <input
-                          type="text"
-                          value={inputValues.position !== null ? inputValues.position : selectedClip.startTime.toFixed(1)}
-                          onChange={handlePositionInputChange}
-                          onBlur={applyPositionChange}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.target.blur();
-                            }
-                          }}
-                          className="w-full bg-gray-600 text-white border border-gray-500 rounded px-3 py-2 text-center"
-                        />
-                      </div>
-                      
-                      <button 
-                        onClick={() => {
-                          const maxPos = 120 - (selectedClip.endTime - selectedClip.startTime);
-                          const newPos = Math.min(maxPos, selectedClip.startTime + 0.1);
-                          handleClipPositionChange(selectedClip.id, newPos.toFixed(1));
-                        }}
-                        className="bg-gray-700 hover:bg-gray-600 text-white w-8 h-8 rounded flex items-center justify-center"
-                      >
-                        <span className="text-xl">+</span>
-                      </button>
-                    </div>
-                    
-                    <div className="text-xs text-gray-400 mt-1 text-center">
-                      Moves entire clip without changing duration
-                    </div>
-                  </div>
-                  
-                  {/* Start time adjustment */}
-                  <div className="mb-5 pb-4 border-b border-gray-700">
-                    <div className="flex justify-between items-center mb-2">
-                      <label className="text-gray-300 font-medium">Start Time</label>
-                      <div className="text-gray-400 text-xs">
-                        Current: {selectedClip.startTime.toFixed(1)}s
-                      </div>
-                    </div>
-                    
-                    <div className="flex items-center gap-2">
-                      <button 
-                        onClick={() => {
-                          // Move start time earlier (decrease) - makes clip longer
-                          const newStart = Math.max(0, selectedClip.startTime - 0.1);
-                          handleClipTimeAdjustment(selectedClip.id, 'startTime', newStart.toFixed(1));
-                        }}
-                        className="bg-blue-800 hover:bg-blue-700 text-white w-8 h-8 rounded flex items-center justify-center"
-                        title="Extend clip start"
-                      >
-                        <span className="text-xl">←</span>
-                      </button>
-                      
-                      {/* Start time input field */}
-                      <div className="flex-1">
-                        <input
-                          type="text"
-                          value={inputValues.startTime !== null ? inputValues.startTime : selectedClip.startTime.toFixed(1)}
-                          onChange={handleStartTimeInputChange}
-                          onBlur={applyStartTimeChange}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.target.blur();
-                            }
-                          }}
-                          className="w-full bg-blue-900 bg-opacity-30 text-white border border-blue-700 rounded px-3 py-2 text-center"
-                        />
-                      </div>
-                      
-                      <button 
-                        onClick={() => {
-                          // Move start time later (increase) - makes clip shorter
-                          const minDuration = 0.5; // Minimum clip duration in seconds
-                          const newStart = Math.min(selectedClip.endTime - minDuration, selectedClip.startTime + 0.1);
-                          handleClipTimeAdjustment(selectedClip.id, 'startTime', newStart.toFixed(1));
-                        }}
-                        className="bg-blue-800 hover:bg-blue-700 text-white w-8 h-8 rounded flex items-center justify-center"
-                        title="Shorten clip start"
-                      >
-                        <span className="text-xl">→</span>
-                      </button>
-                    </div>
-                    
-                    <div className="text-xs text-gray-400 mt-1 text-center">
-                      Adjusts start point (keeps end fixed)
-                    </div>
-                  </div>
-                  
-                  {/* End time adjustment */}
-                  <div className="mb-2">
-                    <div className="flex justify-between items-center mb-2">
-                      <label className="text-gray-300 font-medium">End Time</label>
-                      <div className="text-gray-400 text-xs">
-                        Current: {selectedClip.endTime.toFixed(1)}s
-                      </div>
-                    </div>
-                    
-                    <div className="flex items-center gap-2">
-                      <button 
-                        onClick={() => {
-                          // Move end time earlier (decrease) - makes clip shorter
-                          const minDuration = 0.5; // Minimum clip duration in seconds
-                          const newEnd = Math.max(selectedClip.startTime + minDuration, selectedClip.endTime - 0.1);
-                          handleClipTimeAdjustment(selectedClip.id, 'endTime', newEnd.toFixed(1));
-                        }}
-                        className="bg-green-800 hover:bg-green-700 text-white w-8 h-8 rounded flex items-center justify-center"
-                        title="Shorten clip end"
-                      >
-                        <span className="text-xl">←</span>
-                      </button>
-                      
-                      {/* End time input field */}
-                      <div className="flex-1">
-                        <input
-                          type="text"
-                          value={inputValues.endTime !== null ? inputValues.endTime : selectedClip.endTime.toFixed(1)}
-                          onChange={handleEndTimeInputChange}
-                          onBlur={applyEndTimeChange}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.target.blur();
-                            }
-                          }}
-                          className="w-full bg-green-900 bg-opacity-30 text-white border border-green-700 rounded px-3 py-2 text-center"
-                        />
-                      </div>
-                      
-                      <button 
-                        onClick={() => {
-                          // Move end time later (increase) - makes clip longer
-                          const newEnd = Math.min(120, selectedClip.endTime + 0.1);
-                          handleClipTimeAdjustment(selectedClip.id, 'endTime', newEnd.toFixed(1));
-                        }}
-                        className="bg-green-800 hover:bg-green-700 text-white w-8 h-8 rounded flex items-center justify-center"
-                        title="Extend clip end"
-                      >
-                        <span className="text-xl">→</span>
-                      </button>
-                    </div>
-                    
-                    <div className="text-xs text-gray-400 mt-1 text-center">
-                      Adjusts end point (keeps start fixed)
-                    </div>
-                  </div>
-                  
-                  {/* Timeline visualization */}
-                  <div className="mt-4">
-                    <div className="h-6 w-full bg-gray-900 rounded-md overflow-hidden relative">
-                      {/* Position indicator */}
-                      <div className="absolute top-0 bottom-0 bg-gray-800 rounded-md border border-gray-600" 
-                           style={{
-                             left: `${(selectedClip.startTime / 120) * 100}%`,
-                             width: `${((selectedClip.endTime - selectedClip.startTime) / 120) * 100}%`
-                           }}>
-                        <div className="flex items-center justify-center h-full text-xs text-gray-400">
-                          {(selectedClip.endTime - selectedClip.startTime).toFixed(1)}s
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex justify-between text-xs text-gray-500 mt-1">
-                      <span>0s</span>
-                      <span>30s</span>
-                      <span>60s</span>
-                      <span>90s</span>
-                      <span>120s</span>
-                    </div>
-                  </div>
-                </div>
-                
-                {/* Action buttons based on clip type */}
-                <div className="space-y-2">
-                  {selectedClip.type === 'video' && (
-                    <button
-                      onClick={() => {
-                        if (clips.length > 0) {
-                          const clipIndex = clips.findIndex(c => c.id === selectedClip.id);
-                          if (clipIndex !== -1) {
-                            onOpenClipEditor(clipIndex);
-                          }
-                        }
-                      }}
-                      className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm"
-                    >
-                      Edit {selectedClip.type}
-                    </button>
-                  )}
-                  
-                  {selectedClip.type === 'sound' && (
-                    <button
-                      onClick={() => onAddClip('sound')}
-                      className="w-full px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded text-sm"
-                    >
-                      Replace Sound
-                    </button>
-                  )}
-                  
-                  {selectedClip.type === 'narration' && (
-                    <button
-                      onClick={() => {
-                        if (clips.length > 0) {
-                          const clipIndex = clips.findIndex(c => c.id === selectedClip.id);
-                          if (clipIndex !== -1) {
-                            onOpenClipEditor(clipIndex);
-                          }
-                        }
-                      }}
-                      className="w-full px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded text-sm"
-                    >
-                      Edit Narration
-                    </button>
-                  )}
-                  
-                  {/* Delete button for all clip types */}
-                  <button
-                    onClick={() => {
-                      if (onDeleteClip && selectedClip) {
-                        if (window.confirm(`Are you sure you want to delete this ${selectedClip.type} clip?`)) {
-                          onDeleteClip(selectedClip.id);
-                        }
-                      }
-                    }}
-                    className="w-full px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm"
-                  >
-                    Delete Clip
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="text-gray-400 text-center py-4">
-                Select a clip to view properties
-              </div>
-            )}
-          </div>
-        </div>
+        )}
       </div>
-      
-      {/* Playback error message */}
-      {playbackError && (
-        <div className="bg-red-800 text-white px-3 py-2 rounded-md text-sm mb-2">
-          <p>
-            <strong>Audio playback failed:</strong> External audio files may be blocked by CORS policies. 
-            Consider uploading your own audio files instead of using direct FreePD links.
-          </p>
-        </div>
-      )}
     </div>
   );
 };

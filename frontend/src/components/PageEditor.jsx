@@ -1,5 +1,6 @@
 import React from 'react';
 import { Bubble } from './';
+import mangaPlaceholderImage from '../assets/images/placeholders/manga.png';
 
 // Helper function to format duration from seconds to MM:SS format
 const formatDuration = (seconds) => {
@@ -7,6 +8,45 @@ const formatDuration = (seconds) => {
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   return `${mins}:${secs < 10 ? '0' + secs : secs}`;
+};
+
+// Helper function to format dates for display
+const formatDate = (dateString) => {
+  if (!dateString) return null;
+  
+  try {
+    const date = new Date(dateString);
+    // Check if date is valid
+    if (isNaN(date.getTime())) return null;
+    
+    // Get current date for comparison
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    // If it's today, show time
+    if (date >= today) {
+      return `Today at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    }
+    // If it's yesterday, show "Yesterday"
+    else if (date >= yesterday && date < today) {
+      return `Yesterday at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    }
+    // Otherwise show full date
+    else {
+      return date.toLocaleDateString([], { 
+        year: 'numeric', 
+        month: 'short', 
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    }
+  } catch (e) {
+    console.error("Error formatting date:", e);
+    return null;
+  }
 };
 
 const PageEditor = ({
@@ -25,9 +65,10 @@ const PageEditor = ({
   setAuthor,
   description,
   setDescription,
-  onBackToProjects,
   onShowPublishModal,
-  onShowSoundSelector
+  onShowSoundSelector,
+  onSaveProject,
+  currentProject
 }) => {
   return (
     <div className="max-w-full mx-auto px-4 sm:px-6 lg:px-8 py-4">
@@ -274,7 +315,7 @@ const PageEditor = ({
                                   onError={(e) => {
                                     console.error(`Error loading image for panel ${panel.id}:`, e);
                                     e.target.onerror = null;
-                                    e.target.src = '/assets/images/placeholders/image.png';
+                                    e.target.src = mangaPlaceholderImage;
                                   }}
                                 />
                                 <div className="absolute inset-0 pointer-events-none manga-panel-overlay"></div>
@@ -292,15 +333,22 @@ const PageEditor = ({
                             
                             {/* Display Text Bubbles if any */}
                             {panel.textBoxes && panel.textBoxes.map(textBox => (
-                              <Bubble
-                                key={textBox.id}
-                                type={textBox.type}
-                                text={textBox.text}
-                                position={textBox.position}
-                                style={textBox.style}
-                                selected={false}
-                                draggable={false}
-                              />
+                              <div key={textBox.id} className="absolute inset-0 pointer-events-none z-10">
+                                <Bubble
+                                  type={textBox.type}
+                                  text={textBox.text}
+                                  position={textBox.position || { x: 50, y: 50 }}
+                                  tailPosition={textBox.tailPosition || 'bottom'}
+                                  fontSize={textBox.style?.fontSize}
+                                  size={textBox.size || 'md'}
+                                  bgColor={textBox.style?.backgroundColor || 'white'}
+                                  textColor={textBox.style?.color || 'black'}
+                                  className={`${textBox.style?.bold ? 'font-bold' : ''} ${textBox.style?.italic ? 'italic' : ''} ${textBox.style?.fontFamily ? `font-${textBox.style.fontFamily}` : 'font-comic'}`}
+                                  selected={false}
+                                  draggable={false}
+                                  scale={0.65}
+                                />
+                              </div>
                             ))}
                           </div>
                         ))
@@ -454,17 +502,82 @@ const PageEditor = ({
               </div>
             </div>
           </div>
+          
+          {/* Save Button */}
+          <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 shadow-lg">
+            <button 
+              onClick={() => {
+                console.log("Save Project button clicked");
+                if (onSaveProject) {
+                  onSaveProject({ navigateAfterSave: false });
+                } else {
+                  console.error("onSaveProject function is not defined");
+                }
+              }}
+              className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors duration-300 flex items-center justify-center active:bg-blue-800 active:scale-95"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+              </svg>
+              Save Project
+            </button>
+            
+            {/* Last saved information */}
+            {currentProject?.lastSaved && (
+              <div className="mt-2 text-center">
+                <p className="text-xs text-green-400 flex items-center justify-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Last saved: {formatDate(currentProject.lastSaved)}
+                </p>
+              </div>
+            )}
+          </div>
 
-          {/* Publish button - moved to bottom */}
+          {/* Publish button */}
           <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 shadow-lg">
             <button 
               onClick={() => onShowPublishModal && onShowPublishModal()}
-              className="w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors duration-300 flex items-center justify-center"
+              className={`w-full px-4 py-2 ${currentProject?.published ? 'bg-green-700' : 'bg-green-600 hover:bg-green-700'} text-white rounded-md transition-colors duration-300 flex items-center justify-center`}
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              Publish Manga
+              {currentProject?.published ? 'Update Published Manga' : 'Publish Manga'}
+            </button>
+            
+            {/* Published status information */}
+            {currentProject?.published && (
+              <div className="mt-2 text-center">
+                <div className="text-xs text-green-400 flex items-center justify-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Published {currentProject.lastPublished ? formatDate(currentProject.lastPublished) : ''}
+                </div>
+              </div>
+            )}
+          </div>
+          
+          {/* Exit to Projects button */}
+          <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 shadow-lg">
+            <button 
+              onClick={() => {
+                console.log("Exit to Projects button clicked");
+                if (onSaveProject) {
+                  // Save and navigate back to projects
+                  onSaveProject({ navigateAfterSave: true });
+                } else {
+                  console.error("onSaveProject function is not defined");
+                }
+              }}
+              className="w-full px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-md transition-colors duration-300 flex items-center justify-center"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+              </svg>
+              Exit to Projects
             </button>
           </div>
         </div>
